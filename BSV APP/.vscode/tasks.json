@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "BSV Dienstplanung starten",
+			"type": "shell",
+			"command": "$env:Path = \"$env:LOCALAPPDATA\\BSV-Tools\\node-v22.14.0-win-x64;$env:Path\"; npm.cmd run dev -- --port 3007",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

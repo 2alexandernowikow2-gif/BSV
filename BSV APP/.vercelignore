@@ -1,0 +1,11 @@
+# Local secrets and environment files
+.env*
+
+# Local dependencies and build output
+node_modules/
+.next/
+*.tsbuildinfo
+
+# Personal contact data; never include in a deployment
+*.xlsx
+Lukify-Mitglieder-Import.csv
