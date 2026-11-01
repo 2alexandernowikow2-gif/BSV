@@ -1,7 +1,6 @@
 name: Bootstrap production administrator
 
 on:
-  deployment_status:
   workflow_dispatch:
 
 permissions: {}
@@ -14,10 +13,7 @@ jobs:
   bootstrap:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event.deployment_status.state == 'success' &&
-        (github.event.deployment.environment == 'Production' ||
-         github.event.deployment.environment == 'production')))
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

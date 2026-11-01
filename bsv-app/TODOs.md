@@ -194,12 +194,12 @@ Vorbereitungen beziehungsweise nach dem Deployment abgehakt werden.
 - [ ] Die gezielt ausgewaehlten Release-Dateien committen und auf `main` pushen.
   Das startet das Vercel-Production-Deployment.
 - [ ] In Vercel den Status Ready fuer den neuen Commit und die Produktionsdomain pruefen.
-- [ ] In GitHub Actions den Workflow Bootstrap production administrator pruefen.
-  Nur falls das automatische Statusereignis fehlt, nach erfolgreichem Production-Deployment
-  denselben Workflow einmal ueber Run workflow auf `main` starten.
+- [ ] Nach erfolgreichem Production-Deployment den Workflow Bootstrap production
+  administrator nur einmal manuell ueber Run workflow auf `main` starten.
+  Normale Deployments starten diesen Workflow nicht.
 - [ ] Einrichtungsmail an `2alexander.nowikow2@gmail.com` empfangen und Link oeffnen.
   Beim vorhandenen Konto ist das ein Reset-Link, kein zweites Benutzerkonto.
-- [ ] Eigenes Passwort mit mindestens zwoelf Zeichen setzen und identisch bestaetigen.
+- [ ] Eigenes Passwort mit mindestens sechs Zeichen setzen und identisch bestaetigen.
 - [ ] Weiterleitung zu `/admin/mitarbeiter` und spaetere regulaere Anmeldung pruefen.
 - [ ] `BOOTSTRAP_REPAIR_EXISTING_ADMIN` in Vercel auf `false` setzen; die Aenderung
   wird mit dem naechsten Deployment wirksam. Die dauerhafte Versandreservierung

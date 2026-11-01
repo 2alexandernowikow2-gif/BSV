@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyCommand, assignmentReport, demoSeed, deterministicUuid, eligibility, generateShifts, instant, makeShift, memberSeasonStatus, missingQualification, OPTIONAL_TASK_NAMES, overlaps, previewTimes, QUALIFICATION_NAMES, reportMonths, seasonForDate, suggestMonthlyAssignments, TASK_NAMES, taskWindow, type Snapshot, type Shift } from '../src/lib/domain';
+import { applyCommand, assignmentReport, DEFAULT_SHIFT_TIMES, demoSeed, deterministicUuid, eligibility, generateShifts, instant, lastPlanningTimes, localTime, makeShift, memberSeasonStatus, missingQualification, OPTIONAL_TASK_NAMES, overlaps, previewTimes, QUALIFICATION_NAMES, reportMonths, seasonForDate, suggestMonthlyAssignments, TASK_NAMES, taskWindow, type Snapshot, type Shift } from '../src/lib/domain';
 import { matchesAppOrigin as sameOrigin } from '../src/lib/request-origin';
 
 const now = new Date('2026-01-01T00:00:00Z');
@@ -21,15 +21,31 @@ describe('Dienstplanung lokal', () => {
   });
   it('fügt Bügel/Liftaufsicht nur auf ausdrückliche Auswahl hinzu', () => {
     const shifts = generateShifts('2026-01-03', '2026-01-04', ['Betriebswart'], {}, true);
-    expect(shifts[0].tasks.map(task => task.name)).toEqual([...TASK_NAMES, ...OPTIONAL_TASK_NAMES]);
+    expect(shifts[0].tasks.map(task => task.name)).toEqual([...TASK_NAMES, 'Bügel/Liftaufsicht']);
     expect(shifts[0].tasks.at(-1)?.durationMinutes).toBe(120);
+  });
+  it('fügt den optionalen Bügeldienst mit voller Schichtzeit an allen Diensttagen hinzu', () => {
+    const shifts = generateShifts('2026-01-02', '2026-01-04', ['Bergstation'], {}, false, DEFAULT_SHIFT_TIMES, true);
+    expect(shifts.map(item => item.tasks.filter(task => task.name === 'Bügeldienst'))).toHaveLength(5);
+    expect(shifts.every(item => item.tasks.some(task => task.name === 'Bügeldienst' && task.durationMinutes === null))).toBe(true);
+    expect(shifts.find(item => item.kind === 'early')?.tasks.some(task => task.name === 'Bügel/Liftaufsicht')).toBe(false);
   });
   it('verwendet die drei gleichnamigen Standardqualifikationen', () => {
     expect(TASK_NAMES).toEqual(['Betriebswart', 'Kasse', 'Bergstation']);
     expect(QUALIFICATION_NAMES.slice(0, 3)).toEqual(TASK_NAMES);
   });
   it('verlangt eine ausdrueckliche Freitagsauswahl', () => {
-    expect(() => generateShifts('2026-01-02', '2026-01-04', [])).toThrow('Freitagsaufgaben');
+    expect(() => generateShifts('2026-01-02', '2026-01-04', [])).toThrow('Standardaufgaben');
+  });
+  it('uebernimmt die letzten Zeiten je Diensttyp vor dem neuen Zeitraum', () => {
+    const previous = makeShift('2026-01-09','friday','18:15','22:15',['Betriebswart']);
+    const afterStart = makeShift('2026-01-16','friday','19:00','23:00',['Betriebswart']);
+    const times = lastPlanningTimes([previous,afterStart],'2026-01-16');
+    expect(times.friday).toEqual({ start:'18:15',end:'22:15' });
+    expect(times.early).toEqual(DEFAULT_SHIFT_TIMES.early);
+    const generated = generateShifts('2026-01-16','2026-01-18',['Betriebswart'],{},false,times);
+    expect(localTime(generated[0].start)).toBe('18:15');
+    expect(localTime(generated[1].start)).toBe(times.early.start);
   });
   it('erzeugt stabile gueltige UUIDs', () => {
     expect(deterministicUuid('2026-01-02:friday')).toBe(deterministicUuid('2026-01-02:friday'));

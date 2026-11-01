@@ -1,9 +1,11 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { rememberSessionCookieOptions, REMEMBER_SESSION_COOKIE, REMEMBER_SESSION_MAX_AGE } from './lib/auth-session';
 
 export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const rememberSession = request.cookies.get(REMEMBER_SESSION_COOKIE)?.value === '1';
   let response = NextResponse.next({ request });
   const deny = () => {
     const denied = request.nextUrl.pathname.startsWith('/api/')
@@ -18,7 +20,7 @@ export async function proxy(request: NextRequest) {
     setAll:values => {
       for (const value of values) request.cookies.set(value.name,value.value);
       response = NextResponse.next({ request });
-      for (const value of values) response.cookies.set(value.name,value.value,value.options);
+      for (const value of values) response.cookies.set(value.name,value.value,rememberSessionCookieOptions(value.options,rememberSession));
     }
   } });
   const { data:{ user },error } = await client.auth.getUser();
@@ -26,6 +28,7 @@ export async function proxy(request: NextRequest) {
   const { data:member,error:profileError } = await client.rpc('current_member');
   if (profileError || !member || member.account_status !== 'aktiv' || member.archived_at) return deny();
   if ((request.nextUrl.pathname.startsWith('/admin') || request.nextUrl.pathname.startsWith('/api/admin')) && member.role !== 'admin') return deny();
+  if (rememberSession) response.cookies.set(REMEMBER_SESSION_COOKIE,'1',{ httpOnly:true,secure:request.nextUrl.protocol === 'https:',sameSite:'lax',path:'/',maxAge:REMEMBER_SESSION_MAX_AGE });
   response.headers.set('Cache-Control','private, no-store');
   return response;
 }

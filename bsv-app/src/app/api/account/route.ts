@@ -6,7 +6,7 @@ import { AccountError } from '@/lib/account-rules';
 export const dynamic = 'force-dynamic';
 const inputSchema = z.discriminatedUnion('action',[
   z.object({ action:z.literal('name'),vorname:z.string().trim().min(1).max(60),nachname:z.string().trim().max(60) }).strict(),
-  z.object({ action:z.literal('password'),password:z.string().min(12).max(256) }).strict()
+  z.object({ action:z.literal('password'),password:z.string().min(6).max(256) }).strict()
 ]);
 export async function POST(request: Request) {
   try {

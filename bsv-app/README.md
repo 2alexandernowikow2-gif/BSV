@@ -23,9 +23,9 @@ aktiviert. Zuerst Migration, Mailkonfiguration, Vercel-Variablen und GitHub
 Action gemaess [BENUTZERVERWALTUNG.md](BENUTZERVERWALTUNG.md) einrichten.
 Die Erst-Admin-Adresse ist `2alexander.nowikow2@gmail.com` (`ADMIN_EMAIL`).
 
-1. **Erfolgreiches Production-Deployment:** Erst nach der erfolgreichen
-   Veroeffentlichung auf Vercel ruft die GitHub Action den geschuetzten
-   Bootstrap-Endpunkt auf. Ein fehlgeschlagenes Deployment loest keine Mail aus.
+1. **Erfolgreiches Production-Deployment:** Nach der erfolgreichen
+   Veroeffentlichung auf Vercel wird der Workflow `Bootstrap production administrator`
+   manuell auf `main` gestartet. Normale Deployments loesen keinen Bootstrap aus.
 2. **Bestehenden Zugang einmalig reparieren:** Fuer die bisher nicht gelungene
    Erstanmeldung wird `BOOTSTRAP_REPAIR_EXISTING_ADMIN=true` gesetzt. Das
    bestehende Konto wird wiederverwendet und erhaelt einen Passwort-Setzen-/
@@ -35,7 +35,7 @@ Die Erst-Admin-Adresse ist `2alexander.nowikow2@gmail.com` (`ADMIN_EMAIL`).
 3. **E-Mail-Link oeffnen:** Der Link fuehrt zu `/auth/passwort-setzen` und wird
    auf Gueltigkeit geprueft. Ein ungueltiger oder abgelaufener Link zeigt eine
    verstaendliche Fehlermeldung.
-4. **Eigenes Passwort vergeben:** Ein Passwort mit mindestens zwoelf Zeichen
+4. **Eigenes Passwort vergeben:** Ein Passwort mit mindestens sechs Zeichen
    eingeben und identisch wiederholen. Niemand aus der Vereinsverwaltung
    vergibt oder erhaelt dieses Passwort.
 5. **Admin-Zugang nutzen:** Nach erfolgreichem Speichern wird ein noch
@@ -176,10 +176,11 @@ Absolute Exactly-once-Zustellung durch externe Mailanbieter ist nicht garantiert
 ## Planung
 
 Freitag 18:00-22:00, Samstag/Sonntag 09:30-14:00 und 14:00-18:30.
-Die Standardaufgaben heissen Betriebswart, Kasse und Bergstation. Freitagsaufgaben
-muessen vor Erzeugung ausgewaehlt werden. Buegel/Liftaufsicht kann beim
-Fruehdienst optional hinzugefuegt werden und hat ein zweistuendiges eigenes
-Zeitfenster. Zusaetzliche Dienste sind
+Die Standardaufgaben heissen Betriebswart, Kasse und Bergstation. Standardaufgaben
+muessen vor Erzeugung ausgewaehlt werden. Der optionale Bügeldienst kann fuer
+Freitag, Frueh- und Spaetdienst hinzugefuegt werden und umfasst jeweils die
+gesamte Schicht. Buegel/Liftaufsicht bleibt beim Fruehdienst optional und hat
+ein zweistuendiges eigenes Zeitfenster. Zusaetzliche Dienste sind
 an jedem Wochentag moeglich. Einzel- und Sammelaenderungen erhalten Dienstdatei
 und Aufgabenfenster; Konflikte verhindern atomar die ganze Aenderung.
 Es werden keine Schichten ueber Mitternacht unterstuetzt.

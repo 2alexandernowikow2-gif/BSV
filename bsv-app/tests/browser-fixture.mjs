@@ -20,6 +20,7 @@ const accounts = [
   makeAccount(3,'Max','Eingeladen','max@example.invalid','mitarbeiter','eingeladen'),
   makeAccount(4,'Altbestand','Ohne Zugang',null,'mitarbeiter','eingeladen',false)
 ];
+const schedule = { version:0,shifts:[],members:[],planningPeriods:{} };
 function user(account) { return { id:account.user_id,email:account.email,aud:'authenticated',role:'authenticated',email_confirmed_at:new Date().toISOString(),
   app_metadata:{ provider:'email',providers:['email'] },user_metadata:{ role:'admin' },created_at:new Date().toISOString() }; }
 function session(account) {
@@ -55,7 +56,48 @@ const backend = createServer(async (request,response) => {
     return send(user(account));
   }
   if (url.pathname === '/rest/v1/rpc/current_member') return send(actor.account_status === 'aktiv' ? actor : null);
-  if (url.pathname === '/rest/v1/rpc/load_schedule') return send({ version:0,shifts:[],members:[],planningPeriods:{} });
+  if (url.pathname === '/rest/v1/rpc/load_schedule') {
+    schedule.members = accounts.filter(account => !account.archived_at).map(account => ({
+      id:account.id,name:account.name,active:account.account_status === 'aktiv',qualifications:account.qualifications,
+      winterActive:account.winter_active,summerActive:account.summer_active,
+      status:account.winter_active && account.summer_active ? 'both' : account.winter_active ? 'winter' : account.summer_active ? 'summer' : 'inactive',
+      ...(actor.role === 'admin' ? { email:account.email,role:account.role } : {})
+    }));
+    return send(schedule);
+  }
+  if (url.pathname === '/rest/v1/rpc/mutate_schedule') {
+    const command = body.command;
+    if (body.expected_version !== schedule.version) { response.statusCode = 409;return send({ code:'40001',message:'Schedule version conflict' }); }
+    if (command?.type === 'generate') {
+      const knownIds = new Set(schedule.shifts.map(shift => shift.id));
+      for (const shift of command.shifts ?? []) if (!knownIds.has(shift.id)) { schedule.shifts.push(shift);knownIds.add(shift.id); }
+    } else if (command?.type === 'create' && command.shift) {
+      if (schedule.shifts.some(shift => shift.id === command.shift.id)) { response.statusCode = 400;return send({ code:'23505',message:'Dienst existiert bereits.' }); }
+      schedule.shifts.push(command.shift);
+    } else if (command?.type === 'updateTimes') {
+      for (const update of command.updates ?? []) {
+        const shift = schedule.shifts.find(item => item.id === update.id);
+        if (!shift) { response.statusCode = 400;return send({ code:'22023',message:'Dienst nicht gefunden.' }); }
+        shift.start = update.start;shift.end = update.end;
+      }
+    } else if (command?.type === 'publish') {
+      for (const id of command.ids ?? []) {
+        const shift = schedule.shifts.find(item => item.id === id);
+        if (shift) { shift.published = true;schedule.planningPeriods[shift.date.slice(0,7)] = 'open'; }
+      }
+    } else if (command?.type === 'monthPhase') {
+      schedule.planningPeriods[command.month] = command.phase;
+    } else if (command?.type === 'assign' || command?.type === 'signup' || command?.type === 'withdraw') {
+      const shift = schedule.shifts.find(item => item.tasks.some(task => task.id === command.taskId));
+      const task = shift?.tasks.find(item => item.id === command.taskId);
+      if (!task) { response.statusCode = 400;return send({ code:'22023',message:'Aufgabe nicht gefunden.' }); }
+      task.memberId = command.type === 'withdraw' ? null : command.memberId ?? actor.id;
+    } else {
+      response.statusCode = 400;return send({ code:'22023',message:'Unsupported fixture schedule command' });
+    }
+    schedule.version += 1;
+    return send(schedule);
+  }
   if (url.pathname === '/rest/v1/rpc/find_account_by_email') return send(accounts.find(account => account.email === body.account_email)?.user_id ?? null);
   if (url.pathname === '/rest/v1/rpc/claim_employee_invite' || url.pathname === '/rest/v1/rpc/reserve_account_mail') return send(true);
   if (url.pathname === '/rest/v1/rpc/activate_own_account') { actor.account_status = 'aktiv';return send(null); }

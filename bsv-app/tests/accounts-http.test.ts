@@ -1,5 +1,6 @@
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { AccountError } from '../src/lib/account-rules';
+import { rememberSessionCookieOptions, REMEMBER_SESSION_MAX_AGE } from '../src/lib/auth-session';
 
 const mocks = vi.hoisted(() => ({ adminAccount:vi.fn(),sameOrigin:vi.fn(() => true),listAccounts:vi.fn(async () => []),bootstrapAdmin:vi.fn(async () => ({ sent:true })) }));
 vi.mock('@/lib/server',() => ({ adminAccount:mocks.adminAccount,sameOrigin:mocks.sameOrigin }));
@@ -8,6 +9,14 @@ import { GET,POST } from '../src/app/api/admin/mitarbeiter/route';
 import { POST as bootstrap } from '../src/app/api/bootstrap-admin/route';
 
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+describe('Sitzungs-Cookie',() => {
+  it('setzt bei aktivem Merken eine 30-Tage-Laufzeit und sonst ein Sitzungscookie',() => {
+    const base = { path:'/',sameSite:'lax' as const,maxAge:400 * 24 * 60 * 60 };
+    expect(rememberSessionCookieOptions(base,true)).toEqual({ path:'/',sameSite:'lax',maxAge:REMEMBER_SESSION_MAX_AGE });
+    expect(rememberSessionCookieOptions(base,false)).toEqual({ path:'/',sameSite:'lax' });
+    expect(rememberSessionCookieOptions({ ...base,maxAge:0 },false)).toEqual({ ...base,maxAge:0 });
+  });
+});
 describe('Admin-HTTP-Grenzen',() => {
   it('liefert fuer Mitarbeiter und fehlende Session 403 ohne privilegierten Zugriff',async () => {
     mocks.adminAccount.mockRejectedValue(new AccountError('Nur aktive Administratoren.',403));

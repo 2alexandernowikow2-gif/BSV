@@ -13,6 +13,7 @@ type Session = { configured: boolean; user: SessionUser | null };
 type Tab = 'calendar' | 'duties' | 'members' | 'planning' | 'settings';
 type StoredDemo = { snapshot: Snapshot; email: string; notifications: Notification[] };
 const STORAGE_KEY = 'bsv-weitnau-demo-v1';
+const LOGIN_EMAIL_KEY = 'bsv-remembered-login-email';
 const navigation = [
   { id: 'calendar', name: 'Dienstkalender', icon: CalendarDays, admin: false },
   { id: 'duties', name: 'Meine Dienste', icon: ClipboardList, admin: false },
@@ -37,10 +38,19 @@ function checkSnapshot(payload: Snapshot): Snapshot {
   return payload;
 }
 
-function Login({ onLogin, busy, error }: { onLogin: (email: string, password: string) => Promise<void>; busy: boolean; error: string }) {
-  return <main className="auth-page"><div className="auth-brand"><span className="brand-mark">BSV</span><div><strong>BSV Weitnau</strong><span>Dienstplanung</span></div></div><section className="auth-form"><div className="auth-icon"><KeyRound size={25} /></div><h1>Anmelden</h1><p className="muted">Persoenlicher Vereinszugang</p><form onSubmit={event => { event.preventDefault(); const values = new FormData(event.currentTarget); void onLogin(String(values.get('email')), String(values.get('password'))); }}>
-    <label>E-Mail<input autoComplete="username" name="email" type="email" required autoFocus /></label>
+function Login({ onLogin, busy, error }: { onLogin: (email: string, password: string, rememberSession: boolean) => Promise<void>; busy: boolean; error: string }) {
+  const [email,setEmail] = useState('');
+  const [rememberSession,setRememberSession] = useState(false);
+  useEffect(() => {
+    try {
+      const savedEmail = window.localStorage.getItem(LOGIN_EMAIL_KEY);
+      if (savedEmail) { setEmail(savedEmail); setRememberSession(true); }
+    } catch { }
+  },[]);
+  return <main className="auth-page"><div className="auth-brand"><span className="brand-mark">BSV</span><div><strong>BSV Weitnau</strong><span>Dienstplanung</span></div></div><section className="auth-form"><div className="auth-icon"><KeyRound size={25} /></div><h1>Anmelden</h1><p className="muted">Persoenlicher Vereinszugang</p><form onSubmit={event => { event.preventDefault(); const values = new FormData(event.currentTarget); void onLogin(email, String(values.get('password')), rememberSession); }}>
+    <label>E-Mail<input autoComplete="username" name="email" type="email" required autoFocus value={email} onChange={event => setEmail(event.target.value)} /></label>
     <label>Passwort<input autoComplete="current-password" name="password" type="password" required /></label>
+    <label className="check-label"><input type="checkbox" checked={rememberSession} onChange={event => setRememberSession(event.target.checked)} />E-Mail merken und 30 Tage angemeldet bleiben</label>
     {error && <div className="notice error" role="alert"><AlertCircle size={17} />{error}</div>}
     <button className="primary-button" disabled={busy}>{busy ? <LoaderCircle size={17} className="spin" /> : <ArrowRight size={17} />}Anmelden</button>
   </form><p className="small muted">Zugang nur mit Einladung der Vereinsverwaltung.</p></section></main>;
@@ -153,10 +163,14 @@ export default function ScheduleApp() {
     } catch (issue) { setError(issue instanceof Error ? issue.message : 'Einladung fehlgeschlagen.'); }
     finally { pending.current = false; setBusy(false); }
   }
-  async function login(loginEmail: string, password: string) {
+  async function login(loginEmail: string, password: string, rememberSession: boolean) {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError('');
-    try { await request('/api/login', { method: 'POST', body: JSON.stringify({ email: loginEmail, password }) }); window.location.assign('/'); }
+    try {
+      await request('/api/login', { method: 'POST', body: JSON.stringify({ email: loginEmail, password, rememberSession }) });
+      try { if (rememberSession) window.localStorage.setItem(LOGIN_EMAIL_KEY,loginEmail); else window.localStorage.removeItem(LOGIN_EMAIL_KEY); } catch { }
+      window.location.assign('/');
+    }
     catch (issue) { setError(issue instanceof Error ? issue.message : 'Anmeldung fehlgeschlagen.'); }
     finally { pending.current = false; setBusy(false); }
   }
@@ -169,7 +183,7 @@ export default function ScheduleApp() {
   }
   async function savePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); const password = String(values.get('password'));
-    if (password.length < 12 || password !== String(values.get('confirm'))) { setError('Mindestens 12 Zeichen verwenden und Passwort identisch bestaetigen.'); return; }
+    if (password.length < 6 || password !== String(values.get('confirm'))) { setError('Mindestens 6 Zeichen verwenden und Passwort identisch bestaetigen.'); return; }
     if (demo) { setMessage('Demo: kein Passwort gespeichert.'); form.reset(); return; }
     if (pending.current) return;
     pending.current = true; setBusy(true); setError('');
@@ -208,7 +222,7 @@ export default function ScheduleApp() {
     {!passwordMode && safeTab === 'members' && admin && demo && <MemberDirectory members={snapshot.members} demo={demo} busy={busy} run={run} invite={invite} actionError={error} />}
     {!passwordMode && safeTab === 'planning' && admin && <Planning snapshot={snapshot} actor={actor} busy={busy} run={run} onSelect={shift => setSelectedId(shift.id)} />}
     {(passwordMode || safeTab === 'settings') && <section className="settings-section">{admin && !passwordMode && <><section className="settings-band"><div><Bell size={23} /><h2>Benachrichtigungen</h2><p className="muted">Empfaengeradresse fuer Dienst-Ruecktritte</p></div><form onSubmit={event => { event.preventDefault(); const value = String(new FormData(event.currentTarget).get('email')).trim(); if (!validEmail(value)) { setError('Bitte gueltige Empfaengeradresse angeben.'); return; } void run({ type: 'settings', email: value }); }}><label>E-Mail<input key={email} name="email" type="email" required defaultValue={email} placeholder={demo ? 'demo0@example.invalid' : 'E-Mail-Adresse'} /></label><button className="primary-button" disabled={busy}><Check size={17} />Adresse speichern</button><p className="small muted">{demo ? 'Demo: kein Versand. Die Adresse wird nur lokal gespeichert.' : 'Versand und Warteschlange werden ausschliesslich vom Server verwaltet.'}</p></form></section>{demo && <section className="notification-section"><div className="section-heading"><h2>Lokale Ruecktrittsmeldungen</h2><span className="badge amber">Demo: kein Versand</span></div>{notifications.length ? <div className="notification-list">{notifications.map(item => <article key={item.id}><Mail size={19} /><div><strong>{item.member} · {item.task}</strong><p>{item.shift}</p><small>An: {item.recipient || 'Keine Adresse'} · {new Date(item.createdAt).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}</small></div><span className="badge neutral">{item.status}</span></article>)}</div> : <div className="empty-inline"><Bell size={20} /><span>Noch keine lokalen Ruecktrittsmeldungen.</span></div>}</section>}</>}
-    <section className="settings-band"><div><KeyRound size={23} /><h2>{passwordMode ? 'Neues Passwort' : 'Persoenlicher Zugang'}</h2><p className="muted">{name}</p>{!demo && <a className="text-button" href="/konto">Mein Profil bearbeiten <ArrowRight size={15} /></a>}</div><form onSubmit={savePassword}><label>Neues Passwort<input name="password" type="password" autoComplete="new-password" minLength={12} required /></label><label>Passwort bestaetigen<input name="confirm" type="password" autoComplete="new-password" minLength={12} required /></label><button className="primary-button" disabled={busy}><KeyRound size={17} />Passwort speichern</button>{demo && <p className="small muted">Demo: keine echte Passwortaenderung.</p>}</form></section></section>}
+    <section className="settings-band"><div><KeyRound size={23} /><h2>{passwordMode ? 'Neues Passwort' : 'Persoenlicher Zugang'}</h2><p className="muted">{name}</p>{!demo && <a className="text-button" href="/konto">Mein Profil bearbeiten <ArrowRight size={15} /></a>}</div><form onSubmit={savePassword}><label>Neues Passwort<input name="password" type="password" autoComplete="new-password" minLength={6} required /></label><label>Passwort bestaetigen<input name="confirm" type="password" autoComplete="new-password" minLength={6} required /></label><button className="primary-button" disabled={busy}><KeyRound size={17} />Passwort speichern</button>{demo && <p className="small muted">Demo: keine echte Passwortaenderung.</p>}</form></section></section>}
     <footer className="page-footer"><span>BSV Weitnau · Interne Dienstplanung</span><span>{demo ? 'DEMO · ' : ''}Stand {snapshot.version} · Europe/Berlin</span></footer></main>
     </div><nav className="mobile-nav" aria-label="Mobile Hauptnavigation">{navigation.filter(item => !item.admin || admin).map(item => <button key={item.id} className={safeTab === item.id ? 'active' : ''} aria-current={safeTab === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><item.icon size={20} /><span>{item.id === 'calendar' ? 'Kalender' : item.id === 'duties' ? 'Dienste' : item.id === 'settings' ? 'Konto' : item.name}</span></button>)}</nav>
     {selected && <ShiftDetail key={selected.id} shift={selected} snapshot={snapshot} actor={actor} busy={busy} run={run} close={() => setSelectedId(null)} actionError={error} />}

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { configured, database, identity, sameOrigin } from '@/lib/server';
+import { REMEMBER_SESSION_COOKIE, REMEMBER_SESSION_MAX_AGE } from '@/lib/auth-session';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
@@ -27,27 +29,35 @@ export async function POST(request: Request, context: Context) {
   if (!configured()) return errorResponse('Onlinebetrieb nicht eingerichtet.', 503);
   const { action } = await context.params;
   try {
-    const client = await database();
     if (action === 'logout') {
+      const client = await database();
       await client.auth.signOut();
+      (await cookies()).delete(REMEMBER_SESSION_COOKIE);
       return NextResponse.json({ ok: true });
     }
     const body: unknown = await request.json();
     if (action === 'login') {
-      const credentials = z.object({ email: z.email(), password: z.string().min(1).max(256) }).parse(body);
-      const { error } = await client.auth.signInWithPassword(credentials);
+      const credentials = z.object({ email: z.email(), password: z.string().min(1).max(256), rememberSession: z.boolean().default(false) }).strict().parse(body);
+      const client = await database({ rememberSession: credentials.rememberSession });
+      const { email, password, rememberSession } = credentials;
+      const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) return errorResponse('Anmeldung fehlgeschlagen. Bitte Zugangsdaten pruefen; gesperrte Zugaenge koennen sich nicht anmelden.', 401);
+      const cookieStore = await cookies();
+      if (rememberSession) cookieStore.set(REMEMBER_SESSION_COOKIE,'1',{ httpOnly:true,secure:process.env.NODE_ENV === 'production',sameSite:'lax',path:'/',maxAge:REMEMBER_SESSION_MAX_AGE });
+      else cookieStore.delete(REMEMBER_SESSION_COOKIE);
       if (!(await identity())) {
         const { data:member } = await client.from('members').select('account_status').maybeSingle();
         await client.auth.signOut();
+        cookieStore.delete(REMEMBER_SESSION_COOKIE);
         return errorResponse(member?.account_status === 'eingeladen' ? 'Bitte zuerst die Einladung annehmen und ueber den E-Mail-Link ein Passwort setzen.' : 'Dieser Zugang ist deaktiviert oder noch nicht freigegeben.',403);
       }
       return NextResponse.json({ ok: true });
     }
+    const client = await database();
     const actor = await identity();
     if (!actor) return errorResponse('Bitte anmelden.', 401);
     if (action === 'password') {
-      const { password } = z.object({ password: z.string().min(12).max(256) }).parse(body);
+      const { password } = z.object({ password: z.string().min(6).max(256) }).parse(body);
       const { error } = await client.auth.updateUser({ password });
       return error ? errorResponse('Passwort konnte nicht gespeichert werden.') : NextResponse.json({ ok: true });
     }

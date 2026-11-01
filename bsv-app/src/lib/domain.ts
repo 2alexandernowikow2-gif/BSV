@@ -9,6 +9,9 @@ export type PlanningPhase = 'draft' | 'open' | 'closed';
 export type Snapshot = { shifts: Shift[]; members: Member[]; version: number; planningPeriods?: Record<string, PlanningPhase> };
 export type Actor = { memberId: string; role: string };
 export type TimeUpdate = { id: string; start: string; end: string };
+export type ShiftTimes = Record<'friday' | 'early' | 'late' | 'extra', { start: string; end: string }>;
+export type GeneratedShiftTimes = Pick<ShiftTimes, 'friday' | 'early' | 'late'>;
+export const DEFAULT_SHIFT_TIMES: ShiftTimes = { friday: { start: '18:00', end: '22:00' }, early: { start: '09:30', end: '14:00' }, late: { start: '14:00', end: '18:30' }, extra: { start: '16:00', end: '19:00' } };
 export type Command =
   | { type: 'signup' | 'withdraw'; taskId: string }
   | { type: 'assign'; taskId: string; memberId: string | null }
@@ -21,7 +24,7 @@ export type Command =
   | { type: 'settings'; email: string };
 export type Notification = { id: string; createdAt: string; member: string; task: string; shift: string; recipient: string; status: 'Demo: kein Versand' };
 export const TASK_NAMES = ['Betriebswart', 'Kasse', 'Bergstation'];
-export const OPTIONAL_TASK_NAMES = ['Bügel/Liftaufsicht'];
+export const OPTIONAL_TASK_NAMES = ['Bügel/Liftaufsicht', 'Bügeldienst'];
 export const QUALIFICATION_NAMES = TASK_NAMES;
 export function normalizeTaskName(name: string): string {
   return ({ Berghuette: 'Bergstation', 'Kasse / Buegel': 'Kasse', Liftaufsicht: 'Bügel/Liftaufsicht' } as Record<string, string>)[name] ?? name;
@@ -64,6 +67,18 @@ export function deterministicUuid(value: string): string {
 
 export function localDate(now: Date = new Date()): string { return formatInTimeZone(now, ZONE, 'yyyy-MM-dd'); }
 export function localTime(value: string): string { return formatInTimeZone(value, ZONE, 'HH:mm'); }
+export function lastPlanningTimes(shifts: Shift[], beforeDate: string): ShiftTimes {
+  const times = { ...DEFAULT_SHIFT_TIMES };
+  for (const kind of Object.keys(times) as (keyof ShiftTimes)[]) {
+    const previous = shifts.reduce<Shift | null>((latest, shift) => {
+      if (shift.kind !== kind || shift.date >= beforeDate) return latest;
+      if (!latest || shift.date > latest.date || (shift.date === latest.date && shift.start > latest.start)) return shift;
+      return latest;
+    }, null);
+    if (previous) times[kind] = { start: localTime(previous.start), end: localTime(previous.end) };
+  }
+  return times;
+}
 export function seasonForDate(date: string): 'winter' | 'summer' {
   const monthDay = date.slice(5);
   return monthDay >= '11-15' || monthDay <= '03-15' ? 'winter' : 'summer';
@@ -153,17 +168,17 @@ export function validateSnapshot(snapshot: Snapshot): void {
 export function makeShift(date: string, kind: string, start: string, end: string, names: string[], title = KIND_LABELS[kind] ?? kind, id = deterministicUuid(`${date}:${kind}`), qualifications: Record<string, string> = {}): Shift {
   return { id, date, kind, title, start: instant(date, start), end: instant(date, end), published: false, tasks: names.map((name, index) => ({ id: deterministicUuid(`${id}:task:${index}:${name}`), name, qualification: qualifications[name]?.trim() || (QUALIFICATION_NAMES.includes(name) ? name : null), offsetMinutes: 0, durationMinutes: name === 'Bügel/Liftaufsicht' && kind === 'early' ? 120 : null, memberId: null })) };
 }
-export function generateShifts(from: string, to: string, fridayTasks: string[], qualifications: Record<string, string> = {}, includeLift = false): Shift[] {
-  if (!fridayTasks.length) throw new Error('Bitte Freitagsaufgaben ausdruecklich auswaehlen.');
+export function generateShifts(from: string, to: string, fridayTasks: string[], qualifications: Record<string, string> = {}, includeLift = false, times: GeneratedShiftTimes = DEFAULT_SHIFT_TIMES, includeBuegeldienst = false): Shift[] {
+  if (!fridayTasks.length) throw new Error('Bitte Standardaufgaben ausdruecklich auswaehlen.');
   instant(from, '12:00'); instant(to, '12:00');
   if (from > to || (Date.parse(to) - Date.parse(from)) / 86400000 > 366) throw new Error('Zeitraum muss zwischen 1 und 367 Tagen liegen.');
   const shifts: Shift[] = [];
   for (let date = from; date <= to; date = nextDate(date)) {
     const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-    if (day === 5) shifts.push(makeShift(date, 'friday', '18:00', '22:00', fridayTasks, undefined, undefined, qualifications));
+    if (day === 5) shifts.push(makeShift(date, 'friday', times.friday.start, times.friday.end, [...fridayTasks, ...(includeBuegeldienst ? ['Bügeldienst'] : [])], undefined, undefined, qualifications));
     if (day === 6 || day === 0) {
-      shifts.push(makeShift(date, 'early', '09:30', '14:00', [...TASK_NAMES, ...(includeLift ? OPTIONAL_TASK_NAMES : [])], undefined, undefined, qualifications));
-      shifts.push(makeShift(date, 'late', '14:00', '18:30', TASK_NAMES.slice(0, 3), undefined, undefined, qualifications));
+      shifts.push(makeShift(date, 'early', times.early.start, times.early.end, [...TASK_NAMES, ...(includeLift ? ['Bügel/Liftaufsicht'] : []), ...(includeBuegeldienst ? ['Bügeldienst'] : [])], undefined, undefined, qualifications));
+      shifts.push(makeShift(date, 'late', times.late.start, times.late.end, [...TASK_NAMES, ...(includeBuegeldienst ? ['Bügeldienst'] : [])], undefined, undefined, qualifications));
     }
   }
   validateSnapshot({ shifts, members: [], version: 0 });

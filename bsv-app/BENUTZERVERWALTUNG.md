@@ -109,15 +109,17 @@ deren Migrationen anwenden. Keine produktiven Secrets fuer die Browser-Fixture.
    `BOOTSTRAP_SECRET` mit genau demselben Wert wie in Vercel eintragen.
 2. Unter Actions-Variablen `PRODUCTION_APP_URL` auf
    `https://bsv-dienstplanung.vercel.app` setzen.
-3. GitHub Actions fuer das Repository aktivieren. Vercel muss fuer `BSV`
-   installiert/verknuepft sein und Production-Deployment-Statusmeldungen senden.
+3. GitHub Actions fuer das Repository aktivieren und Vercel fuer `BSV`
+   mit dem Repository verknuepfen. Der Bootstrap-Workflow startet absichtlich
+   nur manuell und nicht durch normale Deployment-Statusmeldungen.
 4. Erst nach Migration und Variablenkonfiguration die App-Aenderungen sowie
    `.github/workflows/bootstrap-admin.yml` gezielt committen und auf `main` pushen.
    Nicht blind alle bereits vorgemerkten Workspace-Dateien committen:
    darunter sind andere Projekte und persoenliche Kontaktdateien.
-5. Nach dem erfolgreichen Vercel-Production-Deployment unter Actions den Workflow
-   `Bootstrap production administrator` pruefen. Falls das Vercel-Statusereignis
-   fehlt, denselben Workflow einmal ueber Run workflow auf `main` starten.
+5. Nach dem erfolgreichen Vercel-Production-Deployment den Workflow
+   `Bootstrap production administrator` nur dann ueber `Run workflow` auf `main`
+   starten, wenn die einmalige Ersteinrichtung ausdruecklich noch aussteht.
+   Nach erfolgreicher Anmeldung den Workflow nicht erneut starten.
 
 Die Action verwendet eine fest konfigurierte Production-Domain, nicht eine URL
 aus dem Ereignis, und ruft `POST /api/bootstrap-admin` mit dem Secret-Header auf.
@@ -130,8 +132,8 @@ statt einen zweiten Auth-Benutzer anzulegen. Auch dieser Modus ist dauerhaft
 idempotent. Nach erfolgreicher Einrichtung Reparaturvariable deaktivieren.
 
 Ein Mailanbieter kann keine garantierte Genau-einmal-Zustellung liefern. Bei
-unklarem Versandfehler reserviert das System den Versuch trotzdem dauerhaft,
-statt bei jedem Deployment neue E-Mails zu schicken. Zuerst SMTP-/Providerstatus
+unklarem Versandfehler reserviert das System den Versuch trotzdem dauerhaft.
+Normale Deployments starten den Bootstrap-Workflow nicht. Zuerst SMTP-/Providerstatus
 pruefen; nur wenn nachweislich kein Link versendet wurde, im Supabase-Notfallzugang
 die betroffene Zeile in `bsv_private.bootstrap_requests` kontrolliert zuruecksetzen
 und den Workflow einmal manuell wiederholen. Sobald ein Admin Zugang hat, laufen

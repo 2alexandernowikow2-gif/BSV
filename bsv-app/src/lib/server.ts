@@ -3,15 +3,17 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { matchesAppOrigin } from './request-origin';
+import { rememberSessionCookieOptions, REMEMBER_SESSION_COOKIE } from './auth-session';
 import { requireActiveAdmin, type Account } from './account-rules';
 
 export function configured() {
   return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }
-export async function database() {
+export async function database(options: { rememberSession?: boolean } = {}) {
   const jar = await cookies();
+  const rememberSession = options.rememberSession ?? jar.get(REMEMBER_SESSION_COOKIE)?.value === '1';
   return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    cookies: { getAll: () => jar.getAll(), setAll: values => { try { values.forEach(({ name, value, options }) => jar.set(name, value, options)); } catch { } } }
+    cookies: { getAll: () => jar.getAll(), setAll: values => { try { values.forEach(({ name, value, options }) => jar.set(name, value, rememberSessionCookieOptions(options, rememberSession))); } catch { } } }
   });
 }
 export function privilegedDatabase() {
