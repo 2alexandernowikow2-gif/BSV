@@ -7,6 +7,55 @@ Demo-Ruecktritte versenden keine E-Mails. Keine echten Kontaktdaten im Demomodus
 speichern. Die endgueltigen Mitarbeiterfelder werden nach dem zweiten Upload
 festgelegt.
 
+## Version 0.2.0 - zentrale Benutzerverwaltung
+
+Die neue Mitarbeiter-/Loginverwaltung ist lokal vorbereitet. Einrichtung,
+Migration, einmalige Reparatur des bisherigen Erst-Admins und manuelle
+Rollout-Schritte stehen in [BENUTZERVERWALTUNG.md](BENUTZERVERWALTUNG.md).
+Vor Deployment zuerst Migration 008 und die dort beschriebenen Secrets einrichten.
+Die vorherige produktive Version ist durch den Git-Tag
+`v0.1.0-before-member-management-20261025` gesichert.
+
+## Erstanmeldung als Admin
+
+Dieser Ablauf ist fuer Version 0.2.0 vorbereitet, aber noch nicht produktiv
+aktiviert. Zuerst Migration, Mailkonfiguration, Vercel-Variablen und GitHub
+Action gemaess [BENUTZERVERWALTUNG.md](BENUTZERVERWALTUNG.md) einrichten.
+Die Erst-Admin-Adresse ist `2alexander.nowikow2@gmail.com` (`ADMIN_EMAIL`).
+
+1. **Erfolgreiches Production-Deployment:** Erst nach der erfolgreichen
+   Veroeffentlichung auf Vercel ruft die GitHub Action den geschuetzten
+   Bootstrap-Endpunkt auf. Ein fehlgeschlagenes Deployment loest keine Mail aus.
+2. **Bestehenden Zugang einmalig reparieren:** Fuer die bisher nicht gelungene
+   Erstanmeldung wird `BOOTSTRAP_REPAIR_EXISTING_ADMIN=true` gesetzt. Das
+   bestehende Konto wird wiederverwendet und erhaelt einen Passwort-Setzen-/
+   Reset-Link per E-Mail. Es wird kein zweites Benutzerkonto angelegt.
+   Bei einer vollstaendigen Neueinrichtung ohne vorhandenes Konto wird
+   stattdessen eine Einladung versendet.
+3. **E-Mail-Link oeffnen:** Der Link fuehrt zu `/auth/passwort-setzen` und wird
+   auf Gueltigkeit geprueft. Ein ungueltiger oder abgelaufener Link zeigt eine
+   verstaendliche Fehlermeldung.
+4. **Eigenes Passwort vergeben:** Ein Passwort mit mindestens zwoelf Zeichen
+   eingeben und identisch wiederholen. Niemand aus der Vereinsverwaltung
+   vergibt oder erhaelt dieses Passwort.
+5. **Admin-Zugang nutzen:** Nach erfolgreichem Speichern wird ein noch
+   eingeladener Zugang aktiviert. Die App leitet direkt zur Verwaltung unter
+   `/admin/mitarbeiter` weiter. Dort lassen sich Mitarbeiter einladen,
+   per CSV importieren und verwalten.
+6. **Spaeter normal anmelden:** Unter https://bsv-dienstplanung.vercel.app mit
+   der Erst-Admin-E-Mail und dem selbst gewaehlten Passwort anmelden. Nach
+   erfolgreicher Einrichtung `BOOTSTRAP_REPAIR_EXISTING_ADMIN=false` setzen.
+
+Weitere Deployments versenden keine erneute Einrichtungsmail. Eine dauerhafte
+Versandreservierung verhindert Wiederholungen auch bei versehentlich weiterhin
+aktiviertem Reparaturmodus. Ein vorhandenes Passwort wird durch den Versand der
+Mail noch nicht geaendert, sondern erst beim Speichern des neuen Passworts.
+
+Bei einem unklaren Versandfehler erfolgt bewusst kein automatischer Neuversand.
+Zuerst den SMTP-/Providerstatus pruefen und eine Wiederholung nur kontrolliert
+nach den Einrichtungshinweisen ausloesen. Die echte Mailzustellung muss nach
+Einrichtung der produktiven Mailkonfiguration gesondert getestet werden.
+
 ## Oeffentlicher Zugriff
 
 Die Anmeldemaske ist unter https://bsv-dienstplanung.vercel.app erreichbar.
@@ -18,9 +67,9 @@ die Redirect-Allowlist enthaelt deren `/auth/callback`.
 Das erste Deployment erfolgte per Dateiimport ohne lokale Schluessel und
 Kontaktdateien. Fuer Codeaenderungen ist ein neuer bereinigter Upload oder
 eine Git-Anbindung erforderlich; lokale Aenderungen werden nicht automatisch
-veroeffentlicht. Die Erstanmeldung des ersten Admins verwendet einen einmaligen
-Anmeldelink an `2alexander.nowikow2@gmail.com`; ein Passwort wird dafuer nicht
-benoetigt. Dieser lokale Codeaenderungsstand ist noch nicht deployed.
+veroeffentlicht. Version 0.2.0 verwendet `ADMIN_EMAIL` und einen geschuetzten
+Deployment-Bootstrap. Das Passwort wird ueber den Einladungs-/Reset-Link selbst
+vergeben. Dieser lokale Codeaenderungsstand ist noch nicht deployed.
 E-Mailzustellung und Callback muessen nach dem Deployment mit der Hosted-
 Supabase-Konfiguration abgenommen werden. Der Session-Endpunkt meldet
 konfigurierten Onlinebetrieb,
@@ -94,20 +143,16 @@ if ($proxy -ne $target) {
    `supabase/migrations/007_first_admin_bootstrap.sql` ueber SQL Editor oder Supabase CLI anwenden.
 2. `.env.local` anhand `.env.example` einrichten. Service-Role-Key bleibt nur
    auf dem Server; niemals als NEXT_PUBLIC-Variable speichern.
-3. Supabase-E-Mail-Anmeldung und E-Mail-Bestaetigung aktivieren. Die App bietet
-   die passwortlose Ersteinrichtung nur fuer `2alexander.nowikow2@gmail.com` an;
-   erst nach Bestaetigung des Anmeldelinks wird der erste Admin atomar angelegt.
-   Andere Auth-Konten erhalten dadurch keinen App-Zugang.
+3. Supabase-E-Mail-Anmeldung und E-Mail-Bestaetigung aktivieren; oeffentliche
+   Registrierung ausschalten. Migration 008 anwenden und `ADMIN_EMAIL` sowie
+   den Production-Bootstrap gemaess Benutzerverwaltungs-Anleitung konfigurieren.
 4. Site URL und Redirect Allowlist konfigurieren: lokal
    `http://127.0.0.1:3000/auth/callback`, spaeter die HTTPS-Produktionsadresse.
    `APP_URL` muss auf dieselbe erreichbare App-Adresse zeigen.
-5. Im Supabase-Mailtemplate fuer Magic Link und Signup den Standard-Link
-   `{{ .ConfirmationURL }}` verwenden, damit der Redirect zurueck zur App
-   erhalten bleibt. Das separate Invite-Template kann wie bisher auf
-   `/auth/callback?token_hash={{ .TokenHash }}&type=invite` zeigen. Auth SMTP mit
-   verifiziertem Absender konfigurieren. Nach der
-   Ersteinrichtung laedt der Admin Mitglieder ein; Speichern allein versendet
-   keine E-Mail.
+5. Invite- und Recovery-Mailtemplate auf `/auth/passwort-setzen` mit Token-Hash
+   umstellen, wie in der Benutzerverwaltungs-Anleitung beschrieben. Auth SMTP
+   mit verifiziertem Absender konfigurieren. Nach der Ersteinrichtung verwaltet
+   der Admin Mitarbeiter und Einladungen unter `/admin/mitarbeiter`.
 6. Admin speichert Benachrichtigungsempfaenger vor Veroeffentlichung von Diensten.
    Die Empfaengeradresse muss organisatorisch verifiziert werden.
 

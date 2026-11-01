@@ -1,0 +1,40 @@
+name: Bootstrap production administrator
+
+on:
+  deployment_status:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: production-admin-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.deployment_status.state == 'success' &&
+        (github.event.deployment.environment == 'Production' ||
+         github.event.deployment.environment == 'production')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Request first administrator setup once
+        env:
+          BOOTSTRAP_SECRET: ${{ secrets.BOOTSTRAP_SECRET }}
+          PRODUCTION_APP_URL: ${{ vars.PRODUCTION_APP_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${BOOTSTRAP_SECRET:?BOOTSTRAP_SECRET is missing}"
+          : "${PRODUCTION_APP_URL:?PRODUCTION_APP_URL is missing}"
+          if [[ ! "$PRODUCTION_APP_URL" =~ ^https://[a-zA-Z0-9.-]+/?$ ]]; then
+            echo "PRODUCTION_APP_URL must be an HTTPS origin."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error --max-time 45 \
+            --request POST \
+            --header "x-bootstrap-secret: $BOOTSTRAP_SECRET" \
+            "${PRODUCTION_APP_URL%/}/api/bootstrap-admin"

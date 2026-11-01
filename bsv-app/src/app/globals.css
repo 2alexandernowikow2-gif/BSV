@@ -381,6 +381,52 @@ td { padding: 15px 12px; border-bottom: 1px solid var(--line); vertical-align: m
 .auth-icon { width: 46px; height: 46px; background: var(--green-light); color: var(--green); border-radius: 6px; display: grid; place-items: center; margin-bottom: 18px; }
 .auth-form h1 { font-size: 29px; margin-bottom: 7px; }
 .auth-form form { display: flex; flex-direction: column; gap: 18px; margin: 26px 0 19px; }
+.auth-brand { text-decoration: none; color: var(--ink); }
+.management-shell { min-height: 100dvh; }
+.management-header { background: var(--paper); border-bottom: 1px solid var(--line); padding: 20px 32px; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.management-header .brand { padding: 0; min-width: 0; }
+.management-header nav { display: flex; flex-wrap: wrap; gap: 20px; }
+.management-header nav a { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; text-decoration: none; }
+.management-content { max-width: 1500px; padding: 30px 32px 56px; margin: 0 auto; min-width: 0; }
+.management-content .page-heading { align-items: center; }
+.management-feedback:empty { display: none; }
+.management-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.account-table { width: 100%; min-width: 900px; table-layout: fixed; }
+.account-table th:first-child { width: 19%; }
+.account-table th:nth-child(2) { width: 23%; }
+.account-table th:nth-child(3) { width: 11%; }
+.account-table th:nth-child(4) { width: 13%; }
+.account-table th:nth-child(5) { width: 13%; }
+.account-table th:last-child { width: 200px; }
+.account-table td { overflow-wrap: anywhere; white-space: normal; }
+.account-subline { display: block; margin-top: 4px; }
+.icon-button.danger { color: var(--danger); }
+.icon-button.danger:hover:not(:disabled) { background: var(--danger-light); }
+.management-shell .modal { min-width: 0; }
+.management-shell .modal form > p { margin-bottom: 20px; }
+.management-shell .modal label { min-width: 0; }
+.management-shell .modal h2 { overflow-wrap: anywhere; }
+.management-shell .modal .form-grid input:not([type="checkbox"]), .management-shell .modal .form-grid select { width: 100%; min-width: 0; }
+.management-shell .danger-button { color: var(--danger); background: var(--paper); border-color: #e8c6c1; }
+.import-modal { max-width: 1100px; width: 100%; }
+.import-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.import-preview { max-height: 50dvh; overflow: auto; }
+.import-preview table { min-width: 700px; }
+.import-preview th { position: sticky; top: 0; background: var(--background); }
+.import-preview td { overflow-wrap: anywhere; max-width: 280px; white-space: normal; }
+.profile-content { max-width: 1000px; }
+@media (max-width: 760px) {
+  .management-header { padding: 16px; align-items: flex-start; flex-direction: column; gap: 14px; }
+  .management-header nav { width: 100%; justify-content: space-between; gap: 10px; }
+  .management-header nav a { font-size: 13px; }
+  .management-content { padding: 22px 16px 40px; }
+  .management-actions { width: 100%; }
+  .management-actions .primary-button, .management-actions .secondary-button { flex: 1; }
+  .management-shell .modal-heading h2 { font-size: 20px; }
+  .management-shell .modal .form-grid { grid-template-columns: minmax(0,1fr); }
+  .management-shell .modal .form-actions > button { flex: 1; }
+  .management-shell .page-heading .badge { white-space: nowrap; }
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: no-preference) { .spin { animation: spin 1.1s linear infinite; } .main-content { animation: enter .25s ease-out; } }
