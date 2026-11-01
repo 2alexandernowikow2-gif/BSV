@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyCommand, assignmentReport, DEFAULT_SHIFT_TIMES, demoSeed, deterministicUuid, eligibility, generateShifts, instant, lastPlanningTimes, localTime, makeShift, memberSeasonStatus, missingQualification, OPTIONAL_TASK_NAMES, overlaps, previewTimes, QUALIFICATION_NAMES, reportMonths, seasonForDate, suggestMonthlyAssignments, TASK_NAMES, taskWindow, type Snapshot, type Shift } from '../src/lib/domain';
+import { commandToDatabase, snapshotFromDatabase } from '../src/lib/schedule-serialization';
 import { matchesAppOrigin as sameOrigin } from '../src/lib/request-origin';
 
 const now = new Date('2026-01-01T00:00:00Z');
@@ -46,6 +47,20 @@ describe('Dienstplanung lokal', () => {
     const generated = generateShifts('2026-01-16','2026-01-18',['Betriebswart'],{},false,times);
     expect(localTime(generated[0].start)).toBe('18:15');
     expect(localTime(generated[1].start)).toBe(times.early.start);
+  });
+  it('serialisiert Schedule-Zeiten lokal für Supabase und zurück als ISO für den Client', () => {
+    const shifts = generateShifts('2026-11-02','2026-11-08',['Betriebswart']);
+    const generated = commandToDatabase({ type:'generate',shifts });
+    expect(generated.type).toBe('generate');
+    if (generated.type !== 'generate') throw new Error('Expected generated schedule command.');
+    expect(generated.shifts[0].start).toBe('18:00');
+    expect(generated.shifts[0].end).toBe('22:00');
+    const loaded = snapshotFromDatabase({ shifts:generated.shifts,members:[],version:1 });
+    expect(loaded.shifts[0].start).toBe(shifts[0].start);
+    const updated = commandToDatabase({ type:'updateTimes',updates:[{ id:shifts[0].id,start:instant(shifts[0].date,'19:45'),end:instant(shifts[0].date,'23:15') }] });
+    expect(updated.type).toBe('updateTimes');
+    if (updated.type !== 'updateTimes') throw new Error('Expected time update command.');
+    expect(updated.updates[0]).toMatchObject({ start:'19:45',end:'23:15' });
   });
   it('erzeugt stabile gueltige UUIDs', () => {
     expect(deterministicUuid('2026-01-02:friday')).toBe(deterministicUuid('2026-01-02:friday'));

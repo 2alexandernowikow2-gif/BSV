@@ -3,6 +3,8 @@ import { cookies } from 'next/headers';
 import { z } from 'zod';
 import { configured, database, identity, sameOrigin } from '@/lib/server';
 import { REMEMBER_SESSION_COOKIE, REMEMBER_SESSION_MAX_AGE } from '@/lib/auth-session';
+import { commandToDatabase, snapshotFromDatabase } from '@/lib/schedule-serialization';
+import type { Command, Snapshot } from '@/lib/domain';
 
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
@@ -21,7 +23,7 @@ export async function GET(request: Request, context: Context) {
   if (!configured()) return errorResponse('Onlinebetrieb nicht eingerichtet.', 503);
   const client = await database();
   const { data, error } = await client.rpc('load_schedule');
-  return error ? errorResponse(error.message, 403) : NextResponse.json(data);
+  return error ? errorResponse(error.message, 403) : NextResponse.json(snapshotFromDatabase(data as Snapshot));
 }
 
 export async function POST(request: Request, context: Context) {
@@ -69,9 +71,9 @@ export async function POST(request: Request, context: Context) {
       } else if (command.type === 'monthPhase') {
         const phaseCommand = z.object({ type: z.literal('monthPhase'), month: z.string().regex(/^(20[0-9]{2}|2100)-(0[1-9]|1[0-2])$/), phase: z.enum(['open', 'closed']) }).strict().parse(command);
         result = await client.rpc('set_month_phase', { expected_version: version, month_key: phaseCommand.month, next_phase: phaseCommand.phase });
-      } else result = await client.rpc('mutate_schedule', { expected_version: version, command });
+      } else result = await client.rpc('mutate_schedule', { expected_version: version, command:commandToDatabase(command as unknown as Command) });
       const { data, error } = result;
-      return error ? errorResponse(error.code === '40001' ? 'Plan wurde inzwischen geaendert. Bitte neu laden.' : error.message, error.code === '40001' ? 409 : 400) : NextResponse.json(data);
+      return error ? errorResponse(error.code === '40001' ? 'Plan wurde inzwischen geaendert. Bitte neu laden.' : error.message, error.code === '40001' ? 409 : 400) : NextResponse.json(snapshotFromDatabase(data as Snapshot));
     }
     if (action === 'invite') {
       return errorResponse('Bitte die zentrale Mitarbeiterverwaltung verwenden.',403);
