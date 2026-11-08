@@ -53,6 +53,7 @@ describe('Dienstplanung lokal', () => {
     const generated = commandToDatabase({ type:'generate',shifts });
     expect(generated.type).toBe('generate');
     if (generated.type !== 'generate') throw new Error('Expected generated schedule command.');
+    expect(generated.shifts[0]).not.toHaveProperty('cancellation');
     expect(generated.shifts[0].start).toBe('18:00');
     expect(generated.shifts[0].end).toBe('22:00');
     const loaded = snapshotFromDatabase({ shifts:generated.shifts,members:[],version:1 });
@@ -107,6 +108,37 @@ describe('Dienstplanung lokal', () => {
     expect(result.notifications[0].status).toBe('Demo: kein Versand');
     expect(() => applyCommand(result.snapshot, { type: 'withdraw', taskId: item.tasks[0].id }, actor, now)).toThrow('eigene');
     expect(() => applyCommand(fixture([item]), { type: 'withdraw', taskId: item.tasks[0].id }, actor, new Date(item.start))).toThrow('begonnen');
+  });
+  it('loescht nur zukuenftige Entwuerfe und erhaelt freigegebene Dienste als Absagen', () => {
+    const draft = makeShift('2026-01-03', 'early', '09:30', '14:00', ['Bergstation']);
+    const removed = applyCommand(fixture([draft]), { type: 'deleteDraft', shiftId: draft.id }, admin, now).snapshot;
+    expect(removed.shifts).toHaveLength(0);
+
+    const published = shift(); published.tasks[0].memberId = member.id;
+    const cancelled = applyCommand(fixture([published]), { type: 'cancelShift', shiftId: published.id, reason: 'Schlechtes Wetter' }, admin, now).snapshot;
+    expect(cancelled.shifts[0].cancellation).toMatchObject({ cancelledBy: admin.memberId, reason: 'Schlechtes Wetter' });
+    expect(cancelled.shifts[0].tasks[0].memberId).toBe(member.id);
+    expect(eligibility(cancelled, cancelled.shifts[0], cancelled.shifts[0].tasks[1], member, now)).toContain('abgesagt');
+    expect(() => applyCommand(cancelled, { type: 'withdraw', taskId: published.tasks[0].id }, actor, now)).toThrow('abgesagt');
+    expect(() => applyCommand(fixture([published]), { type: 'deleteDraft', shiftId: published.id }, admin, now)).toThrow('absagen');
+
+    const reactivated = applyCommand(cancelled, { type: 'reactivateShift', shiftId: published.id }, admin, now).snapshot;
+    expect(reactivated.shifts[0].cancellation).toBeNull();
+  });
+  it('laesst Admins freigegebene Dienste auch in abgeschlossenen Monaten absagen', () => {
+    const item = shift(); item.tasks[0].memberId = member.id;
+    const snapshot = { ...fixture([item]), planningPeriods: { '2026-01': 'closed' as const } };
+    const cancelled = applyCommand(snapshot, { type: 'cancelShift', shiftId: item.id, reason: null }, admin, now).snapshot;
+    expect(cancelled.shifts[0].cancellation?.reason).toBeNull();
+    expect(() => applyCommand(snapshot, { type: 'deleteDraft', shiftId: item.id }, admin, now)).toThrow('Freigegebene');
+  });
+  it('zaehlt abgesagte Dienste nicht in Besetzungsberichten und Monatsabschluss', () => {
+    const item = shift(); item.tasks[0].memberId = member.id;
+    item.cancellation = { cancelledAt: now.toISOString(), cancelledBy: admin.memberId, reason: 'Wetter' };
+    const snapshot = { ...fixture([item]), planningPeriods: { '2026-01': 'open' as const } };
+    expect(assignmentReport(snapshot, ['2026-01'])[0].total).toBe(0);
+    const closed = applyCommand(snapshot, { type: 'monthPhase', month: '2026-01', phase: 'closed' }, admin, now).snapshot;
+    expect(closed.planningPeriods?.['2026-01']).toBe('closed');
   });
   it('aendert historische Zeiten nicht', () => {
     const item = shift();

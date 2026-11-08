@@ -2,7 +2,8 @@ import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 
 export const ZONE = 'Europe/Berlin';
 export type Task = { id: string; name: string; qualification: string | null; offsetMinutes: number; durationMinutes: number | null; memberId: string | null };
-export type Shift = { id: string; date: string; title: string; kind: string; start: string; end: string; published: boolean; tasks: Task[] };
+export type ShiftCancellation = { cancelledAt: string; cancelledBy: string | null; reason: string | null };
+export type Shift = { id: string; date: string; title: string; kind: string; start: string; end: string; published: boolean; tasks: Task[]; cancellation?: ShiftCancellation | null };
 export type MemberStatus = 'winter' | 'summer' | 'both' | 'inactive';
 export type Member = { id: string; name: string; email?: string; role?: string; status: MemberStatus; winterActive: boolean; summerActive: boolean; active: boolean; qualifications: string[] };
 export type PlanningPhase = 'draft' | 'open' | 'closed';
@@ -17,6 +18,9 @@ export type Command =
   | { type: 'assign'; taskId: string; memberId: string | null }
   | { type: 'create'; shift: Shift }
   | { type: 'generate'; shifts: Shift[] }
+  | { type: 'deleteDraft'; shiftId: string }
+  | { type: 'cancelShift'; shiftId: string; reason: string | null }
+  | { type: 'reactivateShift'; shiftId: string }
   | { type: 'updateTimes'; updates: TimeUpdate[] }
   | { type: 'publish'; ids: string[] }
   | { type: 'monthPhase'; month: string; phase: 'open' | 'closed' }
@@ -49,7 +53,7 @@ export function reportMonths(count: number, now = new Date()): string[] {
 export function assignmentReport(snapshot: Snapshot, months: string[]): AssignmentReportRow[] {
   return snapshot.members.map(member => {
     const monthly = Object.fromEntries(months.map(month => [month, snapshot.shifts
-      .filter(shift => shift.date.startsWith(month))
+      .filter(shift => shift.date.startsWith(month) && !shift.cancellation)
       .reduce((total, shift) => total + shift.tasks.filter(task => task.memberId === member.id).length, 0)]));
     const total = Object.values(monthly).reduce((sum, value) => sum + value, 0);
     return { member, total, average: total / months.length, monthly };
@@ -71,7 +75,7 @@ export function lastPlanningTimes(shifts: Shift[], beforeDate: string): ShiftTim
   const times = { ...DEFAULT_SHIFT_TIMES };
   for (const kind of Object.keys(times) as (keyof ShiftTimes)[]) {
     const previous = shifts.reduce<Shift | null>((latest, shift) => {
-      if (shift.kind !== kind || shift.date >= beforeDate) return latest;
+      if (shift.cancellation || shift.kind !== kind || shift.date >= beforeDate) return latest;
       if (!latest || shift.date > latest.date || (shift.date === latest.date && shift.start > latest.start)) return shift;
       return latest;
     }, null);
@@ -108,6 +112,7 @@ export function overlaps(first: { start: number; end: number }, second: { start:
   return first.start < second.end && second.start < first.end;
 }
 export function eligibility(snapshot: Snapshot, shift: Shift, task: Task, member: Member, now = new Date()): string | null {
+  if (shift.cancellation) return 'Dieser Dienst wurde abgesagt.';
   if (!member.active) return 'Mitgliedszugang ist deaktiviert.';
   if (taskWindow(shift, task).start <= now.getTime()) return 'Dieser Dienst hat bereits begonnen.';
   for (const otherShift of snapshot.shifts) for (const otherTask of otherShift.tasks) {
@@ -120,11 +125,11 @@ export function missingQualification(task: Task, member: Member): string | null 
 }
 export function suggestMonthlyAssignments(snapshot: Snapshot, month: string, now = new Date()): AssignmentSuggestion[] {
   const virtual: Snapshot = structuredClone(snapshot);
-  const monthShifts = virtual.shifts.filter(shift => shift.date.startsWith(month));
-  const availableShifts = monthShifts.filter(shift => shift.published && Date.parse(shift.start) > now.getTime()).sort((first, second) => first.start.localeCompare(second.start));
+  const monthShifts = virtual.shifts.filter(shift => shift.date.startsWith(month) && !shift.cancellation);
+  const availableShifts = monthShifts.filter(shift => shift.published && !shift.cancellation && Date.parse(shift.start) > now.getTime()).sort((first, second) => first.start.localeCompare(second.start));
   const isActiveForSeason = (member: Member, shift: Shift) => seasonForDate(shift.date) === 'winter' ? member.winterActive : member.summerActive;
   const monthCounts = new Map(virtual.members.map(member => [member.id, monthShifts.reduce((total, shift) => total + (isActiveForSeason(member, shift) ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
-  const totalCounts = new Map(virtual.members.map(member => [member.id, virtual.shifts.reduce((total, shift) => total + (isActiveForSeason(member, shift) && Date.parse(shift.start) > now.getTime() ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
+  const totalCounts = new Map(virtual.members.map(member => [member.id, virtual.shifts.reduce((total, shift) => total + (!shift.cancellation && isActiveForSeason(member, shift) && Date.parse(shift.start) > now.getTime() ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
   const suggestions: AssignmentSuggestion[] = [];
   for (const shift of availableShifts) for (const task of shift.tasks) {
     if (task.memberId) continue;
@@ -196,6 +201,7 @@ export function applyCommand(snapshot: Snapshot, command: Command, actor: Actor,
     const shift = next.shifts.find(item => item.tasks.some(task => task.id === command.taskId));
     const task = shift?.tasks.find(item => item.id === command.taskId);
     if (!shift || !task) throw new Error('Aufgabe nicht gefunden.');
+    if (shift.cancellation) throw new Error('Dieser Dienst wurde abgesagt.');
     ensureMonthEditable(shift);
     if (taskWindow(shift, task).start <= now.getTime()) throw new Error('Dieser Dienst hat bereits begonnen.');
     if (command.type !== 'assign' && !shift.published) throw new Error('Dienst ist noch nicht veroeffentlicht.');
@@ -226,10 +232,33 @@ export function applyCommand(snapshot: Snapshot, command: Command, actor: Actor,
       if (shift.tasks.some(task => task.memberId !== null)) throw new Error('Neue Aufgaben muessen unbesetzt sein.');
       next.shifts.push(structuredClone(shift));
     }
+  } else if (command.type === 'deleteDraft') {
+    const index = next.shifts.findIndex(item => item.id === command.shiftId);
+    const shift = next.shifts[index];
+    if (!shift) throw new Error('Dienst nicht gefunden.');
+    if (shift.published) throw new Error('Freigegebene Dienste koennen nicht geloescht werden. Bitte absagen.');
+    ensureMonthEditable(shift);
+    if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Entwuerfe bleiben als Historie erhalten.');
+    next.shifts.splice(index, 1);
+  } else if (command.type === 'cancelShift') {
+    const shift = next.shifts.find(item => item.id === command.shiftId);
+    if (!shift) throw new Error('Dienst nicht gefunden.');
+    if (!shift.published) throw new Error('Nur freigegebene Dienste koennen abgesagt werden.');
+    if (shift.cancellation) throw new Error('Dieser Dienst ist bereits abgesagt.');
+    if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Dienste koennen nicht abgesagt werden.');
+    if (command.reason !== null && (!command.reason.trim() || command.reason.length > 160)) throw new Error('Absagegrund ungueltig.');
+    shift.cancellation = { cancelledAt: now.toISOString(), cancelledBy: actor.memberId, reason: command.reason?.trim() || null };
+  } else if (command.type === 'reactivateShift') {
+    const shift = next.shifts.find(item => item.id === command.shiftId);
+    if (!shift) throw new Error('Dienst nicht gefunden.');
+    if (!shift.published || !shift.cancellation) throw new Error('Dieser Dienst ist nicht abgesagt.');
+    if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Dienste koennen nicht reaktiviert werden.');
+    shift.cancellation = null;
   } else if (command.type === 'updateTimes') {
     for (const update of command.updates) {
       const shift = next.shifts.find(item => item.id === update.id);
       if (!shift) throw new Error('Dienst nicht gefunden.');
+      if (shift.cancellation) throw new Error('Abgesagte Dienste muessen zuerst reaktiviert werden.');
       ensureMonthEditable(shift);
       if (Date.parse(shift.start) <= now.getTime() || Date.parse(update.start) <= now.getTime()) throw new Error('Vergangene oder begonnene Dienste sind schreibgeschuetzt.');
       shift.start = update.start; shift.end = update.end;
@@ -239,6 +268,7 @@ export function applyCommand(snapshot: Snapshot, command: Command, actor: Actor,
     for (const id of command.ids) {
       const shift = next.shifts.find(item => item.id === id);
       if (!shift) throw new Error('Dienst nicht gefunden.');
+      if (shift.cancellation) throw new Error('Abgesagte Dienste muessen zuerst reaktiviert werden.');
       ensureMonthEditable(shift);
       if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Dienste koennen nicht veroeffentlicht werden.');
       shift.published = true;
@@ -255,7 +285,7 @@ export function applyCommand(snapshot: Snapshot, command: Command, actor: Actor,
       if (next.planningPeriods?.[command.month] !== 'closed') throw new Error('Nur abgeschlossene Monate koennen wieder geoeffnet werden.');
       next.planningPeriods = { ...next.planningPeriods, [command.month]: 'open' };
     } else {
-      const future = shifts.filter(shift => Date.parse(shift.start) > now.getTime());
+      const future = shifts.filter(shift => !shift.cancellation && Date.parse(shift.start) > now.getTime());
       if (future.some(shift => !shift.published || shift.tasks.some(task => !task.memberId))) throw new Error('Zum Abschliessen muessen alle zukuenftigen Dienste veroeffentlicht und besetzt sein.');
       next.planningPeriods = { ...next.planningPeriods, [command.month]: 'closed' };
     }

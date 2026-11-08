@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { AccountError, employeeInput } from '@/lib/account-rules';
+import { AccountError, employeeInput, importEmployeeInput } from '@/lib/account-rules';
 import { adminAccount, sameOrigin } from '@/lib/server';
-import { changeEmployeeStatus, deleteEmployee, importEmployees, importPreview, inviteEmployee, listAccounts, sendAccountMail, updateEmployee } from '@/lib/accounts-server';
+import { changeEmployeeStatus, deleteEmployee, importEmployees, importPreview, inviteEmployee, inviteExistingEmployee, listAccounts, sendAccountMail, updateEmployee } from '@/lib/accounts-server';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -10,10 +10,11 @@ const command = z.discriminatedUnion('action',[
   z.object({ action:z.literal('invite'),input:employeeInput }).strict(),
   z.object({ action:z.literal('edit'),id:z.uuid(),input:employeeInput }).strict(),
   z.object({ action:z.literal('status'),id:z.uuid(),enabled:z.boolean() }).strict(),
+  z.object({ action:z.literal('inviteExisting'),id:z.uuid() }).strict(),
   z.object({ action:z.literal('delete'),id:z.uuid(),confirmation:z.string().min(1).max(120) }).strict(),
   z.object({ action:z.literal('mail'),id:z.uuid(),invitation:z.boolean() }).strict(),
   z.object({ action:z.literal('preview'),csv:z.string().max(1_000_000) }).strict(),
-  z.object({ action:z.literal('import'),rows:z.array(z.object({ line:z.number().int().min(2),input:employeeInput }).strict()).min(1).max(3) }).strict()
+  z.object({ action:z.literal('import'),rows:z.array(z.object({ line:z.number().int().min(2),input:importEmployeeInput }).strict()).min(1).max(3) }).strict()
 ]);
 function failure(error: unknown) {
   return NextResponse.json({ error:error instanceof AccountError ? error.message : error instanceof z.ZodError ? 'Eingaben ungueltig.' : 'Aktion derzeit nicht verfuegbar. Bitte Serverkonfiguration pruefen.' },
@@ -36,6 +37,7 @@ export async function POST(request: Request) {
     if (input.action === 'preview') return NextResponse.json({ rows:await importPreview(input.csv) });
     if (input.action === 'import') return NextResponse.json({ rows:await importEmployees(actor,input.rows) });
     if (input.action === 'invite') return NextResponse.json(await inviteEmployee(input.input,actor));
+    if (input.action === 'inviteExisting') { await inviteExistingEmployee(actor,input.id); return NextResponse.json({ ok:true }); }
     if (input.action === 'edit') {
       await updateEmployee(actor,input.id,input.input);
       if (input.id === actor.id && input.input.role !== 'admin') return NextResponse.json({ ok:true,redirect:'/' });

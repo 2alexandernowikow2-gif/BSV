@@ -31,9 +31,9 @@ export default function Planning({ snapshot, actor, busy, run, onSelect }: Props
   const [error, setError] = useState('');
   const [extraTasks, setExtraTasks] = useState<string[]>(TASK_NAMES);
   const [customTask, setCustomTask] = useState('');
-  const matches = snapshot.shifts.filter(shift => shift.date.startsWith(month) && (kind === 'all' || shift.kind === kind) && (weekday === 'all' || new Date(`${shift.date}T12:00:00Z`).getUTCDay() === Number(weekday))).sort((first, second) => first.start.localeCompare(second.start));
-  const future = matches.filter(shift => Date.parse(shift.start) > Date.now());
-  const target = scope === 'month' ? future : snapshot.shifts.filter(shift => selected.includes(shift.id) && Date.parse(shift.start) > Date.now());
+  const matches = snapshot.shifts.filter(shift => shift.date.startsWith(month) && (kind === 'all' || shift.kind === kind) && (weekday === 'all' || new Date(`${shift.date}T12:00:00Z`).getUTCDay() === Number(weekday))).map(shift => shift.cancellation ? { ...shift, title: `ABGESAGT · ${shift.title}` } : shift).sort((first, second) => first.start.localeCompare(second.start));
+  const future = matches.filter(shift => !shift.cancellation && Date.parse(shift.start) > Date.now());
+  const target = scope === 'month' ? future : snapshot.shifts.filter(shift => selected.includes(shift.id) && !shift.cancellation && Date.parse(shift.start) > Date.now());
   function toggle(id: string) { setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]); setPreview(null); }
   function updateTime(kind: keyof ShiftTimes, field: 'start' | 'end', value: string) {
     setTimes(current => ({ ...current, [kind]: { ...current[kind], [field]: value } }));

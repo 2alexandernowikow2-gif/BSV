@@ -1,7 +1,7 @@
 import 'server-only';
 import { setTimeout as pause } from 'node:timers/promises';
 import { z } from 'zod';
-import { AccountError, bootstrapOnce, employeeInput, protectAccount, type Account, type EmployeeInput } from './account-rules';
+import { AccountError, bootstrapOnce, employeeInput, importEmployeeInput, isPlaceholderEmail, protectAccount, type Account, type EmployeeInput, type ImportEmployeeInput } from './account-rules';
 import { parseEmployees, type ImportRow } from './employee-csv';
 import { privilegedDatabase } from './server';
 
@@ -42,6 +42,7 @@ async function editProfile(actor: Account, target: Account, changes: Record<stri
   checked(error); return data as Account;
 }
 export async function inviteEmployee(input: EmployeeInput, actor: Account) {
+  if (isPlaceholderEmail(input.email)) throw new AccountError('Bitte zuerst eine echte E-Mail-Adresse eintragen.');
   const admin = privilegedDatabase();
   const redirectTo = passwordRedirect();
   if (await findAuth(input.email)) return { skipped:true, message:'Benutzer bereits vorhanden; keine weitere Einladung versendet.' };
@@ -51,7 +52,7 @@ export async function inviteEmployee(input: EmployeeInput, actor: Account) {
   let member = existing as Account | null;
   if (!member) {
     const { data,error } = await admin.from('members').insert({ email:input.email, name:`${input.vorname} ${input.nachname}`.trim(),
-      vorname:input.vorname,nachname:input.nachname,role:'mitarbeiter',winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications }).select('*').single();
+      vorname:input.vorname,nachname:input.nachname,role:'mitarbeiter',winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications,service_info:input.serviceInfo }).select('*').single();
     if (error?.code === '23505') return { skipped:true,message:'Benutzer wird bereits angelegt; keine doppelte Einladung.' };
     checked(error); member = data as Account;
   }
@@ -61,7 +62,7 @@ export async function inviteEmployee(input: EmployeeInput, actor: Account) {
   const { data: allowed,error: reserveError } = await admin.rpc('reserve_account_mail',{ member_id:member.id });
   checked(reserveError);
   if (!allowed) throw new AccountError('Mailversand derzeit begrenzt. Bitte Einladung gezielt erneut senden.',429);
-  await editProfile(actor,member,{ vorname:input.vorname,nachname:input.nachname,role:input.role,winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications });
+  await editProfile(actor,member,{ vorname:input.vorname,nachname:input.nachname,role:input.role,winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications,service_info:input.serviceInfo });
   const { error } = await admin.auth.admin.inviteUserByEmail(input.email,{ redirectTo,data:{ full_name:`${input.vorname} ${input.nachname}`.trim() } });
   checked(error);
   return { skipped:false,message:'Einladung versendet.' };
@@ -80,7 +81,37 @@ export async function updateEmployee(actor: Account, id: string, input: Employee
       checked(error);
     }
   }
-  return editProfile(actor,target,{ vorname:input.vorname,nachname:input.nachname,role:input.role,winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications });
+  return editProfile(actor,target,{ vorname:input.vorname,nachname:input.nachname,role:input.role,winter_active:input.winterActive,summer_active:input.summerActive,qualifications:input.qualifications,service_info:input.serviceInfo });
+}
+async function importWithoutInvitation(input: ImportEmployeeInput) {
+  const admin = privilegedDatabase();
+  const email = input.email.toLowerCase();
+  if (await findAuth(email)) return { skipped:true,message:'Benutzer bereits vorhanden; keine weitere Einladung versendet.' };
+  const { data:existing,error } = await admin.from('members').select('id,user_id').eq('email',email).is('archived_at',null).maybeSingle();
+  checked(error);
+  if (existing) return { skipped:true,message:existing.user_id ? 'Benutzer bereits vorhanden.' : 'Mitarbeiter mit dieser E-Mail-Adresse bereits vorhanden.' };
+  const { error:insertError } = await admin.from('members').insert({
+    email,name:`${input.vorname} ${input.nachname}`.trim(),vorname:input.vorname,nachname:input.nachname,
+    role:'mitarbeiter',account_status:input.inactive ? 'deaktiviert' : 'eingeladen',
+    winter_active:input.winterActive,summer_active:input.summerActive,
+    qualifications:input.qualifications,service_info:input.serviceInfo,
+  });
+  checked(insertError);
+  return input.inactive
+    ? { skipped:false,message:'Inaktiv importiert; keine Einladung versendet.' }
+    : isPlaceholderEmail(email)
+      ? { skipped:false,message:'Mit Dummy-E-Mail importiert. Adresse bearbeiten und danach manuell einladen.' }
+      : { skipped:false,message:'Importiert; Einladung kann spaeter manuell versendet werden.' };
+}
+export async function inviteExistingEmployee(actor: Account, id: string) {
+  const target = await targetAccount(id);
+  if (target.user_id) throw new AccountError('Dieser Mitarbeiter hat bereits einen Zugang.');
+  if (isPlaceholderEmail(target.email)) throw new AccountError('Bitte vor der Einladung eine echte E-Mail-Adresse eintragen.');
+  if (!target.email) throw new AccountError('Bitte vor der Einladung eine E-Mail-Adresse eintragen.');
+  if (target.account_status === 'deaktiviert') {
+    await editProfile(actor,target,{ account_status:'eingeladen' });
+  }
+  return sendAccountMail(id,true);
 }
 export async function changeEmployeeStatus(actor: Account, id: string, enabled: boolean) {
   const target = await targetAccount(id);
@@ -131,13 +162,14 @@ export async function importPreview(csv: string) {
   try { return parseEmployees(csv,new Set(accounts.filter(account => account.user_id).map(account => account.email?.toLowerCase() ?? ''))); }
   catch (error) { throw new AccountError(error instanceof Error ? error.message : 'CSV konnte nicht verarbeitet werden.'); }
 }
-export async function importEmployees(actor: Account, rows: { line:number; input:EmployeeInput }[]): Promise<ImportRow[]> {
+export async function importEmployees(actor: Account, rows: { line:number; input:ImportEmployeeInput }[]): Promise<ImportRow[]> {
   const result: ImportRow[] = [];
   for (const [index,row] of rows.entries()) {
     if (index > 0) await pause(1100);
     const base = { line:row.line,email:row.input.email,name:`${row.input.vorname} ${row.input.nachname}`.trim(),input:row.input };
     try {
-      const outcome = await inviteEmployee(employeeInput.parse(row.input),actor);
+      const input = importEmployeeInput.parse(row.input);
+      const outcome = await importWithoutInvitation(input);
       result.push({ ...base,state:outcome.skipped ? 'skipped' : 'success',message:outcome.message });
     } catch (error) {
       result.push({ ...base,state:'error',message:error instanceof AccountError ? error.message : 'Einladung fehlgeschlagen.' });

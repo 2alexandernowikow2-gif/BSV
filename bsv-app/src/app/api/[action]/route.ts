@@ -9,6 +9,11 @@ import type { Command, Snapshot } from '@/lib/domain';
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ action: string }> };
 const errorResponse = (message: string, status = 400) => NextResponse.json({ error: message }, { status });
+const shiftManagementCommand = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('deleteDraft'), shiftId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict(),
+  z.object({ type: z.literal('cancelShift'), shiftId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/), reason: z.string().max(160).nullable() }).strict(),
+  z.object({ type: z.literal('reactivateShift'), shiftId: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/) }).strict(),
+]);
 
 export async function GET(request: Request, context: Context) {
   const { action } = await context.params;
@@ -71,6 +76,14 @@ export async function POST(request: Request, context: Context) {
       } else if (command.type === 'monthPhase') {
         const phaseCommand = z.object({ type: z.literal('monthPhase'), month: z.string().regex(/^(20[0-9]{2}|2100)-(0[1-9]|1[0-2])$/), phase: z.enum(['open', 'closed']) }).strict().parse(command);
         result = await client.rpc('set_month_phase', { expected_version: version, month_key: phaseCommand.month, next_phase: phaseCommand.phase });
+      } else if (['deleteDraft','cancelShift','reactivateShift'].includes(String(command.type))) {
+        const lifecycle = shiftManagementCommand.parse(command);
+        result = await client.rpc('manage_shift', {
+          expected_version: version,
+          action: lifecycle.type,
+          shift_id: lifecycle.shiftId,
+          reason: lifecycle.type === 'cancelShift' ? lifecycle.reason : null,
+        });
       } else result = await client.rpc('mutate_schedule', { expected_version: version, command:commandToDatabase(command as unknown as Command) });
       const { data, error } = result;
       return error ? errorResponse(error.code === '40001' ? 'Plan wurde inzwischen geaendert. Bitte neu laden.' : error.message, error.code === '40001' ? 409 : 400) : NextResponse.json(snapshotFromDatabase(data as Snapshot));

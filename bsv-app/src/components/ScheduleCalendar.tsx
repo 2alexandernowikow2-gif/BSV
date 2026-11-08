@@ -8,26 +8,29 @@ import interactionPlugin from '@fullcalendar/interaction';
 import deLocale from '@fullcalendar/core/locales/de';
 import { format } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
+import { Ban, CalendarDays, ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
 import { localDate, localTime, nextDate, ZONE, type Shift } from '../lib/domain';
 
 export function germanDate(date: string, options: Intl.DateTimeFormatOptions = { weekday: 'short', day: '2-digit', month: 'short' }): string {
   return new Intl.DateTimeFormat('de-DE', { ...options, timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
 }
-export function ShiftRow({ shift, onSelect, memberId }: { shift: Shift; onSelect: (shift: Shift) => void; memberId?: string }) {
+export function ShiftRow({ shift, onSelect, memberId, isAdmin = false, busy = false, onCancel }: { shift: Shift; onSelect: (shift: Shift) => void; memberId?: string; isAdmin?: boolean; busy?: boolean; onCancel?: (shift: Shift) => void }) {
   const occupied = shift.tasks.filter(task => task.memberId).length;
   const mine = shift.tasks.some(task => task.memberId === memberId);
   const weekend = [0, 6].includes(new Date(`${shift.date}T12:00:00Z`).getUTCDay());
   const weekday = germanDate(shift.date, { weekday: 'long' });
-  return <button className={`shift-row ${mine ? 'is-mine' : ''}`} onClick={() => onSelect(shift)}>
+  return <div className="shift-row-wrap"><button className={`shift-row ${mine ? 'is-mine' : ''}`} onClick={() => onSelect(shift)}>
     <span className="date-block"><strong>{germanDate(shift.date, { day: '2-digit' })}</strong><span>{germanDate(shift.date, { month: 'short' })}</span></span>
     <span className="shift-row-main"><strong>{weekend ? weekday : shift.title}</strong><span><Clock size={14} />{localTime(shift.start)} - {localTime(shift.end)}<span className="weekday">{weekend ? shift.title : weekday}</span></span></span>
-    <span className="shift-row-status"><span className={`badge ${!shift.published ? 'neutral' : occupied < shift.tasks.length ? 'amber' : 'green'}`}>{!shift.published ? 'Entwurf' : `${shift.tasks.length - occupied} frei`}</span>{mine && <small>Mein Dienst</small>}</span>
+    <span className="shift-row-status"><span className={`badge ${shift.cancellation ? 'cancelled' : !shift.published ? 'neutral' : occupied < shift.tasks.length ? 'amber' : 'green'}`}>{shift.cancellation ? 'Abgesagt' : !shift.published ? 'Entwurf' : `${shift.tasks.length - occupied} frei`}</span>{mine && <small>Mein Dienst</small>}</span>
     <ChevronRight size={18} />
-  </button>;
+  </button>{isAdmin && shift.published && !shift.cancellation && Date.parse(shift.start) > Date.now() && <button className="danger-button calendar-row-cancel" disabled={busy} title="Dienst absagen" aria-label={`${shift.title} am ${germanDate(shift.date)} absagen`} onClick={() => {
+    const assigned = shift.tasks.filter(task => task.memberId).length;
+    if (globalThis.confirm(`${shift.title} am ${germanDate(shift.date)} absagen? ${assigned} zugeordnete Mitarbeiter werden informiert.`)) onCancel?.(shift);
+  }}><Ban size={15} />Absagen</button>}</div>;
 }
 
-export default function ScheduleCalendar({ shifts, memberId, onSelect, onRangeChange }: { shifts: Shift[]; memberId: string; onSelect: (shift: Shift) => void; onRangeChange: (range: { start: string; end: string }) => void }) {
+export default function ScheduleCalendar({ shifts, memberId, onSelect, onRangeChange, isAdmin = false, busy = false, onCancel }: { shifts: Shift[]; memberId: string; onSelect: (shift: Shift) => void; onRangeChange: (range: { start: string; end: string }) => void; isAdmin?: boolean; busy?: boolean; onCancel?: (shift: Shift) => void }) {
   const calendar = useRef<FullCalendar>(null);
   const [view, setView] = useState<'timeGridWeek' | 'dayGridMonth'>('timeGridWeek');
   const [title, setTitle] = useState('Dienstkalender');
@@ -55,12 +58,20 @@ export default function ScheduleCalendar({ shifts, memberId, onSelect, onRangeCh
       }}
       events={shifts.map(shift => {
         const free = shift.tasks.filter(task => !task.memberId).length;
-        return { id: shift.id, title: shift.title, start: formatInTimeZone(shift.start, ZONE, "yyyy-MM-dd'T'HH:mm:ss"), end: formatInTimeZone(shift.end, ZONE, "yyyy-MM-dd'T'HH:mm:ss"), classNames: [!shift.published ? 'event-draft' : free ? 'event-open' : 'event-full', shift.tasks.some(task => task.memberId === memberId) ? 'event-mine' : ''], extendedProps: { shift, free } };
+        return { id: shift.id, title: shift.title, start: formatInTimeZone(shift.start, ZONE, "yyyy-MM-dd'T'HH:mm:ss"), end: formatInTimeZone(shift.end, ZONE, "yyyy-MM-dd'T'HH:mm:ss"), classNames: [shift.cancellation ? 'event-cancelled' : !shift.published ? 'event-draft' : free ? 'event-open' : 'event-full', shift.tasks.some(task => task.memberId === memberId) ? 'event-mine' : ''], extendedProps: { shift, free } };
       })}
-      eventClick={info => onSelect(info.event.extendedProps.shift as Shift)}
+      eventClick={info => {
+        const shift = info.event.extendedProps.shift as Shift;
+        if (isAdmin && (info.jsEvent.target as HTMLElement).closest('[data-cancel-shift]')) {
+          const assigned = shift.tasks.filter(task => task.memberId).length;
+          if (globalThis.confirm(`${shift.title} am ${germanDate(shift.date)} absagen? ${assigned} zugeordnete Mitarbeiter werden informiert.`)) onCancel?.(shift);
+          return;
+        }
+        onSelect(shift);
+      }}
       eventDidMount={info => { info.el.setAttribute('tabindex', '0'); info.el.setAttribute('role', 'button'); info.el.setAttribute('aria-label', `${info.event.title}, ${info.event.extendedProps.free} freie Aufgaben`); info.el.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(info.event.extendedProps.shift as Shift); } }); }}
-      eventContent={info => <div className="calendar-event"><strong>{info.event.title}</strong><span>{info.timeText}</span><small><Users size={12} />{info.event.extendedProps.free} frei{!(info.event.extendedProps.shift as Shift).published ? ' · Entwurf' : ''}</small></div>}
+      eventContent={info => { const shift = info.event.extendedProps.shift as Shift; return <div className="calendar-event"><strong>{info.event.title}</strong><span>{info.timeText}</span>{shift.cancellation ? <small className="badge cancelled"><Ban size={12} />Abgesagt · {shift.cancellation.reason || 'kein Grund'}</small> : <small><Users size={12} />{info.event.extendedProps.free} frei{!shift.published ? ' · Entwurf' : ''}</small>}{isAdmin && shift.published && !shift.cancellation && Date.parse(shift.start) > Date.now() && <button type="button" className="calendar-event-cancel" data-cancel-shift disabled={busy} aria-label="Dienst absagen"><Ban size={12} />Absagen</button>}</div>; }}
     /></div>
-    <div className="mobile-agenda">{agenda.length ? agenda.map(shift => <ShiftRow key={shift.id} shift={shift} memberId={memberId} onSelect={onSelect} />) : <div className="empty-state"><CalendarDays size={30} /><h3>Keine Dienste im Zeitraum</h3></div>}</div>
+    <div className="mobile-agenda">{agenda.length ? agenda.map(shift => <ShiftRow key={shift.id} shift={shift} memberId={memberId} isAdmin={isAdmin} busy={busy} onCancel={onCancel} onSelect={onSelect} />) : <div className="empty-state"><CalendarDays size={30} /><h3>Keine Dienste im Zeitraum</h3></div>}</div>
   </section>;
 }

@@ -7,9 +7,10 @@ import { missingQualification, seasonForDate, suggestMonthlyAssignments, taskWin
 type Props = { month: string; snapshot: Snapshot; busy: boolean; run: (command: Command) => Promise<boolean> };
 
 export default function MonthlyWorkflow({ month, snapshot, busy, run }: Props) {
-  const shifts = snapshot.shifts.filter(shift => shift.date.startsWith(month));
+  const monthShifts = snapshot.shifts.filter(shift => shift.date.startsWith(month));
+  const shifts = monthShifts.filter(shift => !shift.cancellation);
   const futureShifts = shifts.filter(shift => Date.parse(shift.start) > Date.now());
-  const phase: PlanningPhase = snapshot.planningPeriods?.[month] ?? (shifts.some(shift => shift.published) ? 'open' : 'draft');
+  const phase: PlanningPhase = snapshot.planningPeriods?.[month] ?? (monthShifts.some(shift => shift.published) ? 'open' : 'draft');
   const members = snapshot.members.filter(member => member.active && (member.winterActive || member.summerActive)).sort((first, second) => first.name.localeCompare(second.name, 'de'));
   const taskCount = shifts.reduce((total, shift) => total + shift.tasks.length, 0);
   const assignedCount = shifts.reduce((total, shift) => total + shift.tasks.filter(task => task.memberId).length, 0);
@@ -46,7 +47,7 @@ export default function MonthlyWorkflow({ month, snapshot, busy, run }: Props) {
       const seasonLabel = member.winterActive && member.summerActive ? 'Winter + Sommer' : member.winterActive ? 'Winter' : 'Sommer';
       return <div className="monthly-member" key={member.id}><span>{member.name}<small className="member-season">{seasonLabel}</small></span><span className="monthly-meter"><i style={{ width: `${percentage}%` }} /></span><strong>{count}</strong></div>;
     }) : <p className="small muted">Keine aktiven Mitglieder vorhanden.</p>}</section>
-    {phase === 'open' && <button className="secondary-button monthly-close" disabled={busy || !shifts.length || futureShifts.some(shift => !shift.published || shift.tasks.some(task => !task.memberId))} onClick={() => void run({ type: 'monthPhase', month, phase: 'closed' })}><LockKeyhole size={16} />Monat abschließen</button>}
+    {phase === 'open' && <button className="secondary-button monthly-close" disabled={busy || !monthShifts.length || futureShifts.some(shift => !shift.published || shift.tasks.some(task => !task.memberId))} onClick={() => void run({ type: 'monthPhase', month, phase: 'closed' })}><LockKeyhole size={16} />Monat abschließen</button>}
     {phase === 'closed' && <button className="secondary-button monthly-close" disabled={busy} onClick={() => void run({ type: 'monthPhase', month, phase: 'open' })}><RotateCcw size={16} />Anmeldung wieder öffnen</button>}
     {phase === 'open' && assignedCount < taskCount && <p className="small muted monthly-note"><ArrowRight size={14} /> Abschließen wird möglich, sobald alle zukünftigen Aufgaben besetzt sind.</p>}
     {phase === 'open' && assignedCount === taskCount && <p className="small muted monthly-note"><Sparkles size={14} />Alle Aufgaben sind besetzt und der Monat kann abgeschlossen werden.</p>}

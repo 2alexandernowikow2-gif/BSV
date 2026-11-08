@@ -9,15 +9,22 @@ export const employeeInput = z.object({
   role: accountRole.default('mitarbeiter'),
   winterActive: z.boolean().default(true),
   summerActive: z.boolean().default(false),
-  qualifications: z.array(z.string().trim().min(1).max(80)).max(64).default([])
+  qualifications: z.array(z.string().trim().min(1).max(80)).max(64).default([]),
+  serviceInfo: z.string().trim().max(500).default('')
 }).strict();
+export const importEmployeeInput = employeeInput.extend({ inactive: z.boolean().default(false) });
 export type EmployeeInput = z.infer<typeof employeeInput>;
+export type ImportEmployeeInput = z.infer<typeof importEmployeeInput>;
 export type Account = {
   id: string; user_id: string | null; name: string; vorname: string; nachname: string;
   email: string | null; role: z.infer<typeof accountRole>; account_status: z.infer<typeof accountStatus>;
-  winter_active: boolean; summer_active: boolean; qualifications: string[];
+  winter_active: boolean; summer_active: boolean; qualifications: string[]; service_info: string;
   archived_at: string | null; created_at: string; updated_at: string;
 };
+
+export function isPlaceholderEmail(email: string | null | undefined): boolean {
+  return !!email && /^no-email\+[a-z0-9-]+@example\.invalid$/i.test(email);
+}
 
 export class AccountError extends Error {
   constructor(message: string, public status = 400) { super(message); }

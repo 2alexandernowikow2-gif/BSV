@@ -97,12 +97,55 @@ describe.sequential('PostgreSQL-Kontoschutz', () => {
     expect((await db.query<{tokens_revoked_at:string}>(`select tokens_revoked_at from public.members where user_id = $1`,[memberId])).rows[0].tokens_revoked_at).toBeTruthy();
     await db.query(`select public.admin_edit_member($1,$2,'{"account_status":"aktiv"}')`,[adminId,target.rows[0].id]);
   });
+  it('speichert Dienstinformationen ueber den Admin-Mitarbeiter-RPC', async () => {
+    const target = await db.query<{id:string}>(`select id from public.members where user_id = $1`,[memberId]);
+    await db.query(`select public.admin_edit_member($1,$2,'{"service_info":"Nur an Wochenenden"}'::jsonb)`,[adminId,target.rows[0].id]);
+    const result = await db.query<{service_info:string}>(`select service_info from public.members where id = $1`,[target.rows[0].id]);
+    expect(result.rows[0].service_info).toBe('Nur an Wochenenden');
+  });
+  it('sagt freigegebene Dienste ab, informiert Zugeordnete und loescht Entwuerfe', async () => {
+    const assigned = await db.query<{ id:string }>(`select id from public.members where user_id = $1`,[memberId]);
+    await db.query(`update public.members set account_status = 'aktiv',tokens_revoked_at = null where user_id = $1`,[memberId]);
+    const shifts = [
+      { id:'weather-shift',date:'2090-01-02',title:'Fruehdienst',kind:'early',start:'09:00',end:'12:00',published:true,
+        tasks:[{ id:'weather-task',name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:assigned.rows[0].id }] },
+      { id:'draft-shift',date:'2090-02-02',title:'Entwurf',kind:'early',start:'09:00',end:'12:00',published:false,
+        tasks:[{ id:'draft-task',name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:null }] },
+    ];
+      await db.query(`insert into public.admin_settings(id,email) values(1,'admin@example.invalid') on conflict (id) do update set email = excluded.email`);
+    await db.query(`update public.schedule_state set data = $1::jsonb,version = 0 where id = 1`,[JSON.stringify(shifts)]);
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    let cancelled: { version:number;shifts:Array<{id:string;cancellation?:{reason:string|null}}> };
+    try {
+      const result = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(0,'cancelShift','weather-shift','Schlechtes Wetter') as snapshot`);
+      cancelled = result.rows[0].snapshot;
+      expect(cancelled.shifts.find(item => item.id === 'weather-shift')?.cancellation?.reason).toBe('Schlechtes Wetter');
+    } finally { await db.exec('reset role'); }
+    expect((await db.query<{ count:string }>(`select count(*)::text as count from public.notification_outbox where event_key like 'cancel:%'`)).rows[0].count).toBe('1');
+
+    await db.exec(`select set_config('request.jwt.claim.sub','${memberId}',false);set role authenticated;`);
+    try {
+      const result = await db.query<{ snapshot:typeof cancelled }>(`select public.load_schedule() as snapshot`);
+      expect(result.rows[0].snapshot.shifts.some(item => item.id === 'weather-shift')).toBe(false);
+      await expect(db.query(`select public.mutate_schedule(1,'{"type":"withdraw","taskId":"weather-task"}'::jsonb)`)).rejects.toThrow('Cancelled shifts cannot be changed');
+    } finally { await db.exec('reset role'); }
+
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    try {
+      const restored = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(1,'reactivateShift','weather-shift',null) as snapshot`);
+      expect(restored.rows[0].snapshot.shifts.find(item => item.id === 'weather-shift')?.cancellation).toBeNull();
+      const deleted = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(2,'deleteDraft','draft-shift',null) as snapshot`);
+      expect(deleted.rows[0].snapshot.shifts.some(item => item.id === 'draft-shift')).toBe(false);
+    } finally { await db.exec('reset role'); }
+    expect((await db.query<{ count:string }>(`select count(*)::text as count from public.notification_outbox where event_key like 'reactivate:%'`)).rows[0].count).toBe('1');
+  });
   it('loescht Auth und zukuenftige Zuweisungen, behaelt vergangene Namen', async () => {
     const target = await db.query<{id:string}>(`select id from public.members where user_id = $1`,[memberId]);
     const id = target.rows[0].id;
     const shifts = ['2000-01-02','2090-01-02'].map((date,index) => ({ id:`history-${index}`,date,title:'Test',kind:'manual',start:'09:00',end:'12:00',published:false,
       tasks:[{ id:`task-history-${index}`,name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:id }] }));
     await db.query(`update public.schedule_state set data = $1::jsonb where id = 1`,[JSON.stringify(shifts)]);
+    await db.exec(`select set_config('request.jwt.claim.sub','',false)`);
     await db.query(`delete from auth.users where id = $1`,[memberId]);
     const result = await db.query<{data:typeof shifts}>(`select data from public.schedule_state where id = 1`);
     expect(result.rows[0].data[0].tasks[0].memberId).toBe(id);

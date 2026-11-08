@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock, LockKeyhole, Send, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { eligibility, instant, localTime, missingQualification, previewTimes, taskWindow, type Actor, type Command, type Shift, type Snapshot, type TimeUpdate } from '../lib/domain';
 import { germanDate } from './ScheduleCalendar';
+import ShiftAdminActions from './ShiftAdminActions';
 import { useDialog } from './useDialog';
 
 export default function ShiftDetail({ shift, snapshot, actor, busy, run, close, actionError }: { shift: Shift; snapshot: Snapshot; actor: Actor; busy: boolean; run: (command: Command) => Promise<boolean>; close: () => void; actionError: string }) {
@@ -24,6 +25,7 @@ export default function ShiftDetail({ shift, snapshot, actor, busy, run, close, 
   }
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><section ref={dialog} className="modal shift-detail" role="dialog" aria-modal="true" aria-labelledby="shift-detail-title"><header className="modal-heading"><div><p className="eyebrow">{germanDate(shift.date, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}</p><h2 id="shift-detail-title">{shift.title}</h2></div><button className="icon-button" onClick={close} title="Schliessen" aria-label="Schliessen"><X size={21} /></button></header><div className="detail-summary"><span><Clock size={17} />{localTime(shift.start)} - {localTime(shift.end)}</span><span className={`badge ${shift.published ? 'green' : 'amber'}`}>{shift.published ? 'Veroeffentlicht' : 'Entwurf'}</span>{historical && <span className="badge neutral"><LockKeyhole size={12} />Historie</span>}</div>
     {actionError && <div className="notice error" role="alert"><AlertTriangle size={17} />{actionError}</div>}
+    <ShiftAdminActions shift={shift} actor={actor} busy={busy} run={run} />
     <div className="task-list">{shift.tasks.map(task => {
       const window = taskWindow(shift, task);
       const owner = snapshot.members.find(item => item.id === task.memberId);

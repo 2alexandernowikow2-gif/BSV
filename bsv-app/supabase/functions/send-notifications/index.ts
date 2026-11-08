@@ -9,11 +9,25 @@ type Withdrawal = {
   withdrawnAt: string;
 };
 
+type ShiftNotice = {
+  type: "cancelled" | "reactivated";
+  memberName: string;
+  taskNames: string;
+  shiftTitle: string;
+  shiftId: string;
+  date: string;
+  start: string;
+  end: string;
+  reason: string | null;
+  changedAt: string;
+};
+type NotificationPayload = Withdrawal | ShiftNotice;
+
 type OutboxNotification = {
   id: string;
   event_key: string;
   recipient: string;
-  payload: Withdrawal;
+  payload: NotificationPayload;
   lease_token: string;
 };
 
@@ -78,9 +92,23 @@ function escapeHtml(value: string): string {
   });
 }
 
-function validPayload(payload: unknown): payload is Withdrawal {
+function validPayload(payload: unknown): payload is NotificationPayload {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
   const value = payload as Record<string, unknown>;
+  if (value.type === "cancelled" || value.type === "reactivated") {
+    const limits: Record<string, number> = {
+      type: 12, memberName: 120, taskNames: 2000, shiftTitle: 160, shiftId: 100,
+      date: 10, start: 5, end: 5, changedAt: 19,
+    };
+    if (Object.keys(value).length !== 10 || Object.entries(limits).some(([key, maximum]) =>
+      typeof value[key] !== "string" || !(value[key] as string).length || (value[key] as string).length > maximum)) return false;
+    return (value.reason === null || (typeof value.reason === "string" && value.reason.length <= 160)) &&
+      /^[A-Za-z0-9_-]{1,100}$/.test(value.shiftId as string) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(value.date as string) &&
+      /^([01]\d|2[0-3]):[0-5]\d$/.test(value.start as string) &&
+      /^([01]\d|2[0-3]):[0-5]\d$/.test(value.end as string) &&
+      /^\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(value.changedAt as string);
+  }
   const limits: Record<string, number> = {
     memberName: 120, taskName: 120, shiftTitle: 160, shiftId: 100,
     date: 10, start: 5, end: 5, withdrawnAt: 19,
@@ -117,18 +145,37 @@ async function deliver(config: Configuration, notification: OutboxNotification):
   let permanentFailure = false;
   let errorCode = "provider_network_error";
   let messageId: string | null = null;
-  if (!validPayload(notification.payload) || typeof notification.recipient !== "string" ||
-    notification.recipient.length > 254 || !emailPattern.test(notification.recipient) ||
-    !/^withdraw:\d+:[A-Za-z0-9_-]{1,100}$/.test(notification.event_key)) {
+  const validNotification = validPayload(notification.payload);
+  const isShiftNotice = validNotification && "type" in notification.payload;
+  const validEventKey = validNotification && (isShiftNotice
+    ? notification.payload.type === "cancelled"
+      ? /^cancel:\d+:[A-Za-z0-9_-]{1,100}:[0-9a-f-]{36}$/.test(notification.event_key)
+      : /^reactivate:\d+:[A-Za-z0-9_-]{1,100}:[0-9a-f-]{36}$/.test(notification.event_key)
+    : /^withdraw:\d+:[A-Za-z0-9_-]{1,100}$/.test(notification.event_key));
+  if (!validNotification || typeof notification.recipient !== "string" ||
+    notification.recipient.length > 254 || !emailPattern.test(notification.recipient) || !validEventKey) {
     permanentFailure = true;
     errorCode = "invalid_notification";
   } else {
     const payload = notification.payload;
     const link = `${config.appOrigin}/?shift=${encodeURIComponent(payload.shiftId)}`;
-    const details = `${payload.memberName} hat sich von ${payload.taskName} abgemeldet.\n` +
-      `${payload.shiftTitle}, ${payload.date}, ${payload.start}-${payload.end} (Europe/Berlin).\n` +
-      `Abmeldung: ${payload.withdrawnAt} (Europe/Berlin).\n` +
-      "Der Platz war zum Zeitpunkt der Abmeldung frei. Der aktuelle Stand ist im Dienstplan sichtbar.";
+    const isShiftChange = "type" in payload;
+    const details = isShiftChange
+      ? payload.type === "cancelled"
+        ? `Hallo ${payload.memberName}, dein Dienst wurde abgesagt.\n` +
+          `${payload.shiftTitle}, ${payload.date}, ${payload.start}-${payload.end} (Europe/Berlin).\n` +
+          `Betroffene Aufgabe(n): ${payload.taskNames}.\n` +
+          `${payload.reason ? `Grund: ${payload.reason}.\n` : ""}` +
+          `Absage: ${payload.changedAt} (Europe/Berlin).`
+        : `Hallo ${payload.memberName}, der abgesagte Dienst findet wieder statt.\n` +
+          `${payload.shiftTitle}, ${payload.date}, ${payload.start}-${payload.end} (Europe/Berlin).\n` +
+          `Deine Aufgabe(n): ${payload.taskNames}.\n` +
+          `${payload.reason ? `Grund der vorherigen Absage: ${payload.reason}.\n` : ""}` +
+          `Reaktiviert: ${payload.changedAt} (Europe/Berlin). Deine Zuordnung ist wieder aktiv.`
+      : `${payload.memberName} hat sich von ${payload.taskName} abgemeldet.\n` +
+        `${payload.shiftTitle}, ${payload.date}, ${payload.start}-${payload.end} (Europe/Berlin).\n` +
+        `Abmeldung: ${payload.withdrawnAt} (Europe/Berlin).\n` +
+        "Der Platz war zum Zeitpunkt der Abmeldung frei. Der aktuelle Stand ist im Dienstplan sichtbar.";
     const html = `<p>${escapeHtml(details).replace(/\n/g, "<br>")}</p>` +
       `<p><a href="${escapeHtml(link)}">Dienstplan oeffnen</a></p>`;
     try {
@@ -142,7 +189,7 @@ async function deliver(config: Configuration, notification: OutboxNotification):
         body: JSON.stringify({
           from: config.sender,
           to: [notification.recipient],
-          subject: "BSV Dienstplan: Abmeldung",
+          subject: isShiftChange ? payload.type === "cancelled" ? "BSV Dienstplan: Dienst abgesagt" : "BSV Dienstplan: Dienst reaktiviert" : "BSV Dienstplan: Abmeldung",
           text: `${details}\n${link}`,
           html,
         }),

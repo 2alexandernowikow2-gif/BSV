@@ -10,7 +10,30 @@ describe('Mitarbeiter-CSV', () => {
   it('verarbeitet Kommas und zitierte Felder', () => {
     const rows = parseEmployees('vorname,nachname,email,rolle\n"Anna, Maria",Test,anna@example.invalid,admin');
     expect(rows[0].input?.vorname).toBe('Anna, Maria');
-    expect(rows[0].input?.role).toBe('admin');
+    expect(rows[0].input?.role).toBe('mitarbeiter');
+  });
+  it('uebernimmt Qualifikationen, Dienstinfo und inaktiven Status', () => {
+    const rows = parseEmployees('Vorname;Nachname;E-Mail;Qualifikation;Info zu Dienst;Status\nAnna;Test;anna@example.invalid;Kasse|Bergstation;Nur am Wochenende;Inaktiv');
+    expect(rows[0].input).toMatchObject({
+      qualifications:['Kasse','Bergstation'],serviceInfo:'Nur am Wochenende',inactive:true,role:'mitarbeiter'
+    });
+    expect(rows[0].state).toBe('ready');
+  });
+  it('weist unbekannte Mitgliedsstatus beim Import zurueck', () => {
+    const rows = parseEmployees('vorname;nachname;email;status\nAnna;Test;anna@example.invalid;ausgetreten?');
+    expect(rows[0].state).toBe('error');
+    expect(rows[0].message).toContain('Status');
+  });
+  it('uebernimmt Dummy-Adressen ohne Einladungsfreigabe', () => {
+    const row = parseEmployees('vorname;nachname;email;status\nAnna;Test;no-email+123@example.invalid;aktiv')[0];
+    expect(row.state).toBe('ready');
+    expect(row.input?.inactive).toBe(false);
+    expect(row.message).toContain('Dummy-Adresse');
+  });
+  it('startet auch bei aktiven Kontakten mit echter E-Mail keinen Einladungsversand', () => {
+    const row = parseEmployees('vorname;nachname;email;status\nAnna;Test;anna@example.com;aktiv')[0];
+    expect(row.state).toBe('ready');
+    expect(row.message).toContain('ohne Einladung');
   });
   it('meldet alle Duplikate und fehlende oder ungueltige E-Mails', () => {
     const rows = parseEmployees('vorname;nachname;email\nA;B;a@example.invalid\nC;D;A@example.invalid\nE;F;\nG;H;falsch');

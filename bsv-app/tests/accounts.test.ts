@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bootstrapOnce, employeeInput, protectAccount, requireActiveAdmin, type Account } from '../src/lib/account-rules';
+import { bootstrapOnce, employeeInput, isPlaceholderEmail, protectAccount, requireActiveAdmin, type Account } from '../src/lib/account-rules';
 
 const account: Account = {
   id: 'member-1', user_id: 'user-1', name: 'Test Admin', vorname: 'Test', nachname: 'Admin',
   email: 'test@example.invalid', role: 'admin', account_status: 'aktiv', archived_at: null,
-  winter_active: true, summer_active: false, qualifications: [], created_at: '', updated_at: ''
+  winter_active: true, summer_active: false, qualifications: [], service_info: '', created_at: '', updated_at: ''
 };
 
 describe('Kontorechte', () => {
@@ -28,6 +28,9 @@ describe('Kontorechte', () => {
     expect(employeeInput.parse({ vorname: ' Test ', nachname: '', email: 'Test@example.invalid' }).role).toBe('mitarbeiter');
     expect(employeeInput.parse({ vorname: 'Test', nachname: '', email: 'Test@example.invalid' }).email).toBe('test@example.invalid');
     expect(() => employeeInput.parse({ vorname: 'Test', nachname: '', email: 'bad', role: 'owner' })).toThrow();
+    expect(employeeInput.parse({ vorname: 'Test', nachname: '', email: 'Test@example.invalid', serviceInfo:'nur am Wochenende' }).serviceInfo).toBe('nur am Wochenende');
+    expect(isPlaceholderEmail('no-email+123@example.invalid')).toBe(true);
+    expect(isPlaceholderEmail('person@example.com')).toBe(false);
   });
 });
 
