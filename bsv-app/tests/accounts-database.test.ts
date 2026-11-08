@@ -111,6 +111,8 @@ describe.sequential('PostgreSQL-Kontoschutz', () => {
         tasks:[{ id:'weather-task',name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:assigned.rows[0].id }] },
       { id:'draft-shift',date:'2090-02-02',title:'Entwurf',kind:'early',start:'09:00',end:'12:00',published:false,
         tasks:[{ id:'draft-task',name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:null }] },
+      { id:'publish-shift',date:'2090-02-03',title:'Zu veroeffentlichen',kind:'early',start:'09:00',end:'12:00',published:false,
+        tasks:[{ id:'publish-task',name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:null }] },
     ];
       await db.query(`insert into public.admin_settings(id,email) values(1,'admin@example.invalid') on conflict (id) do update set email = excluded.email`);
     await db.query(`update public.schedule_state set data = $1::jsonb,version = 0 where id = 1`,[JSON.stringify(shifts)]);
@@ -123,21 +125,47 @@ describe.sequential('PostgreSQL-Kontoschutz', () => {
     } finally { await db.exec('reset role'); }
     expect((await db.query<{ count:string }>(`select count(*)::text as count from public.notification_outbox where event_key like 'cancel:%'`)).rows[0].count).toBe('1');
 
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    try {
+      const published = await db.query<{ snapshot:{shifts:Array<{id:string;published:boolean;cancellation?:{reason:string|null}|null}>} }>(
+        `select public.mutate_schedule(1,'{"type":"publish","ids":["publish-shift"]}'::jsonb) as snapshot`);
+      expect(published.rows[0].snapshot.shifts.find(item => item.id === 'publish-shift')?.published).toBe(true);
+      expect(published.rows[0].snapshot.shifts.find(item => item.id === 'weather-shift')?.cancellation?.reason).toBe('Schlechtes Wetter');
+    } finally { await db.exec('reset role'); }
+
     await db.exec(`select set_config('request.jwt.claim.sub','${memberId}',false);set role authenticated;`);
     try {
       const result = await db.query<{ snapshot:typeof cancelled }>(`select public.load_schedule() as snapshot`);
       expect(result.rows[0].snapshot.shifts.some(item => item.id === 'weather-shift')).toBe(false);
-      await expect(db.query(`select public.mutate_schedule(1,'{"type":"withdraw","taskId":"weather-task"}'::jsonb)`)).rejects.toThrow('Cancelled shifts cannot be changed');
+      await expect(db.query(`select public.mutate_schedule(2,'{"type":"withdraw","taskId":"weather-task"}'::jsonb)`)).rejects.toThrow('Cancelled shifts cannot be changed');
     } finally { await db.exec('reset role'); }
 
     await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
     try {
-      const restored = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(1,'reactivateShift','weather-shift',null) as snapshot`);
+      const restored = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(2,'reactivateShift','weather-shift',null) as snapshot`);
       expect(restored.rows[0].snapshot.shifts.find(item => item.id === 'weather-shift')?.cancellation).toBeNull();
-      const deleted = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(2,'deleteDraft','draft-shift',null) as snapshot`);
+      const deleted = await db.query<{ snapshot:typeof cancelled }>(`select public.manage_shift(3,'deleteDraft','draft-shift',null) as snapshot`);
       expect(deleted.rows[0].snapshot.shifts.some(item => item.id === 'draft-shift')).toBe(false);
     } finally { await db.exec('reset role'); }
     expect((await db.query<{ count:string }>(`select count(*)::text as count from public.notification_outbox where event_key like 'reactivate:%'`)).rows[0].count).toBe('1');
+  });
+  it('loescht abgelaufene unveroeffentlichte Dienste beim Laden automatisch', async () => {
+    const shifts = [
+      { id:'expired-draft',date:'2000-01-02',title:'Vergangener Entwurf',kind:'manual',start:'09:00',end:'12:00',published:false,tasks:[] },
+      { id:'future-draft',date:'2090-01-02',title:'Zukuenftiger Entwurf',kind:'manual',start:'09:00',end:'12:00',published:false,tasks:[] },
+      { id:'past-published',date:'2000-02-02',title:'Veroeffentlichter Dienst',kind:'manual',start:'09:00',end:'12:00',published:true,tasks:[] },
+    ];
+    await db.query(`update public.schedule_state set data = $1::jsonb,version = 0 where id = 1`,[JSON.stringify(shifts)]);
+    await db.query(`insert into public.planning_periods(month,status) values ('2000-01-01','closed') on conflict (month) do update set status = 'closed'`);
+    await db.query(`insert into public.shift_cancellations(shift_id,cancelled_at) values ('past-published',now())`);
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    try {
+      const result = await db.query<{ snapshot:{shifts:Array<{id:string}>} }>(`select public.load_schedule() as snapshot`);
+      expect(result.rows[0].snapshot.shifts.map(shift => shift.id)).toEqual(['future-draft','past-published']);
+    } finally { await db.exec('reset role'); }
+    const stored = await db.query<{ data:Array<{id:string}> }>(`select data from public.schedule_state where id = 1`);
+    expect(stored.rows[0].data.map(shift => shift.id)).toEqual(['future-draft','past-published']);
+    await db.query(`update public.shift_cancellations set reactivated_at = now() where shift_id = 'past-published'`);
   });
   it('loescht Auth und zukuenftige Zuweisungen, behaelt vergangene Namen', async () => {
     const target = await db.query<{id:string}>(`select id from public.members where user_id = $1`,[memberId]);
