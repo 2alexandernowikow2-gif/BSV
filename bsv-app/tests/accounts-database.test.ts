@@ -183,4 +183,42 @@ describe.sequential('PostgreSQL-Kontoschutz', () => {
     expect(archived.rows[0].archived_at).toBeTruthy();
     expect(archived.rows[0].name).toBe('Eigener Name');
   });
+  it('speichert Verfuegbarkeit idempotent, prueft RLS und Berliner Datumsgrenzen', async () => {
+    const owner = await db.query<{id:string}>(`select id from public.members where user_id = $1`,[adminId]);
+    const other = await db.query<{id:string}>(`select id from public.members where email = 'untrusted@example.invalid'`);
+    const today = await db.query<{date:string}>(`select to_char(now() at time zone 'Europe/Berlin','YYYY-MM-DD') as date`);
+    const shifts = [today.rows[0].date,'2090-04-01','2000-04-01'].map((date,index) => ({ id:`availability-${index}`,date,title:'Test',kind:'manual',start:'09:00',end:'23:59',published:false,
+      tasks:[{id:`availability-task-${index}`,name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:null}] }));
+    await db.query(`update public.schedule_state set data = $1::jsonb where id = 1`,[JSON.stringify(shifts)]);
+    await db.query(`update public.members set account_status = 'aktiv',tokens_revoked_at = null where id = $1`,[other.rows[0].id]);
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    try {
+      const loaded = await db.query<{data:{days:Array<{date:string;assignedMemberIds:string[]}>;members:Array<{id:string}>}}>(`select public.load_availability() as data`);
+      expect(loaded.rows[0].data.days.map(day => day.date)).toEqual([today.rows[0].date,'2090-04-01']);
+      await db.query(`select public.set_availability($1,array[$2::date],false)`,[owner.rows[0].id,today.rows[0].date]);
+      await db.query(`select public.set_availability($1,array[$2::date],false)`,[owner.rows[0].id,today.rows[0].date]);
+      expect((await db.query(`select * from public.availability_exceptions`)).rows).toHaveLength(1);
+      await expect(db.query(`select public.set_availability($1,array['2000-04-01'::date],false)`,[owner.rows[0].id])).rejects.toThrow('kommende Diensttage');
+      await expect(db.query(`select public.set_availability($1,array['2090-04-02'::date],false)`,[owner.rows[0].id])).rejects.toThrow('kommende Diensttage');
+      await db.query(`select public.set_availability($1,array['2090-04-01'::date],false)`,[other.rows[0].id]);
+      await expect(db.query(`select public.mutate_schedule((select (public.load_schedule()->>'version')::bigint),$1::jsonb)`,
+        [JSON.stringify({type:'assign',taskId:'availability-task-1',memberId:other.rows[0].id})])).rejects.toThrow('nicht verfuegbar');
+      await db.query(`select public.mutate_schedule((select (public.load_schedule()->>'version')::bigint),$1::jsonb)`,
+        [JSON.stringify({type:'assign',taskId:'availability-task-1',memberId:other.rows[0].id,availabilityConfirmed:true})]);
+      const conflict = await db.query<{data:{days:Array<{date:string;assignedMemberIds:string[]}>}}>(`select public.load_availability() as data`);
+      expect(conflict.rows[0].data.days.find(day => day.date === '2090-04-01')?.assignedMemberIds).toContain(other.rows[0].id);
+      await db.query(`select public.restore_availability($1,array[$2::date,'2090-04-01'::date],array['2090-04-01'::date])`,[owner.rows[0].id,today.rows[0].date]);
+    } finally { await db.exec('reset role'); }
+    await db.exec(`select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000003',false);set role authenticated;`);
+    try {
+      expect((await db.query(`select * from public.availability_exceptions`)).rows).toHaveLength(2);
+      await expect(db.query(`insert into public.availability_exceptions(member_id,date) values ($1,'2090-04-01')`,[owner.rows[0].id])).rejects.toThrow();
+      await expect(db.query(`insert into public.availability_exceptions(member_id,date) values ($1,'2000-04-01')`,[other.rows[0].id])).rejects.toThrow('kommende Diensttage');
+      await db.query(`delete from public.availability_exceptions where member_id = $1`,[owner.rows[0].id]);
+      expect((await db.query(`select * from public.availability_exceptions where member_id = $1`,[owner.rows[0].id])).rows).toHaveLength(1);
+      await expect(db.query(`select public.set_availability($1,array['2090-04-01'::date],true)`,[owner.rows[0].id])).rejects.toThrow('eigene Meldungen');
+      await db.query(`select public.set_availability($1,array['2090-04-01'::date],true)`,[other.rows[0].id]);
+      await db.query(`select public.set_availability($1,array['2090-04-01'::date],true)`,[other.rows[0].id]);
+    } finally { await db.exec('reset role'); }
+  });
 });

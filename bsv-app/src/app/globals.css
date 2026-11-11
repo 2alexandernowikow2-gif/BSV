@@ -1,4 +1,23 @@
 @import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;650;700&display=swap');
+ .availability-page { max-width: 800px; margin: 0 auto; padding: 24px 16px 64px; }
+ .availability-page h1 { display: flex; align-items: center; gap: 10px; font-size: 26px; }
+ .availability-page button, .availability-page summary { min-height: 44px; }
+ .availability-page .notice { flex-wrap: wrap; }
+ .availability-range { margin: 20px 0; padding: 16px 0; border: 0; border-bottom: 1px solid var(--border, #dbe4df); }
+ .availability-member { display: grid; gap: 8px; margin-top: 16px; }
+ .availability-days { display: grid; }
+ .availability-day { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 18px 0; border-bottom: 1px solid var(--border, #dbe4df); }
+ .availability-day > div:first-child { display: grid; gap: 8px; }
+ .availability-day small { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+ .availability-switch { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; border: 1px solid #719983; border-radius: 6px; font: inherit; font-weight: 600; background: #ecf6ef; color: #1c5739; }
+ .availability-switch.unavailable { background: #fff1ef; border-color: #bd7770; color: #8a2820; }
+ .availability-switch:disabled { opacity: .6; cursor: wait; }
+ .availability-conflict { color: #8a2820; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+ .availability-conflict p { margin: 4px 0; }
+ .planning-availability { margin: 16px 0; }
+ .planning-availability-day { border-bottom: 1px solid #dbe4df; padding: 10px 0; display: flex; gap: 12px; flex-wrap: wrap; }
+ .planning-availability-day .availability-conflict { flex-basis: 100%; }
+ @media (min-width: 600px) { .availability-day { grid-template-columns: minmax(0,1fr) 210px; } .availability-day > .availability-conflict { grid-column: 1 / -1; } }
 
 :root {
   --green: #226344;

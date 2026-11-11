@@ -7,7 +7,16 @@ export type Shift = { id: string; date: string; title: string; kind: string; sta
 export type MemberStatus = 'winter' | 'summer' | 'both' | 'inactive';
 export type Member = { id: string; name: string; email?: string; role?: string; status: MemberStatus; winterActive: boolean; summerActive: boolean; active: boolean; qualifications: string[] };
 export type PlanningPhase = 'draft' | 'open' | 'closed';
-export type Snapshot = { shifts: Shift[]; members: Member[]; version: number; planningPeriods?: Record<string, PlanningPhase> };
+export type AvailabilityException = { memberId: string; date: string };
+export type Snapshot = { shifts: Shift[]; members: Member[]; version: number; planningPeriods?: Record<string, PlanningPhase>; availabilityExceptions?: AvailabilityException[]; activatedMemberIds?: string[] };
+export function isAvailable(snapshot: Snapshot, memberId: string, date: string): boolean {
+  return !snapshot.availabilityExceptions?.some(entry => entry.memberId === memberId && entry.date === date);
+}
+export function availabilityCounts(snapshot: Snapshot, date: string): { available: number; total: number } {
+  const members = snapshot.members.filter(member => member.active && (!snapshot.activatedMemberIds || snapshot.activatedMemberIds.includes(member.id))
+    && (seasonForDate(date) === 'winter' ? member.winterActive : member.summerActive));
+  return { available: members.filter(member => isAvailable(snapshot,member.id,date)).length, total: members.length };
+}
 export type Actor = { memberId: string; role: string };
 export type TimeUpdate = { id: string; start: string; end: string };
 export type ShiftTimes = Record<'friday' | 'early' | 'late' | 'extra', { start: string; end: string }>;
@@ -15,7 +24,7 @@ export type GeneratedShiftTimes = Pick<ShiftTimes, 'friday' | 'early' | 'late'>;
 export const DEFAULT_SHIFT_TIMES: ShiftTimes = { friday: { start: '18:00', end: '22:00' }, early: { start: '09:30', end: '14:00' }, late: { start: '14:00', end: '18:30' }, extra: { start: '16:00', end: '19:00' } };
 export type Command =
   | { type: 'signup' | 'withdraw'; taskId: string }
-  | { type: 'assign'; taskId: string; memberId: string | null }
+  | { type: 'assign'; taskId: string; memberId: string | null; availabilityConfirmed?: boolean }
   | { type: 'create'; shift: Shift }
   | { type: 'generate'; shifts: Shift[] }
   | { type: 'deleteDraft'; shiftId: string }
@@ -126,14 +135,16 @@ export function missingQualification(task: Task, member: Member): string | null 
 export function suggestMonthlyAssignments(snapshot: Snapshot, month: string, now = new Date()): AssignmentSuggestion[] {
   const virtual: Snapshot = structuredClone(snapshot);
   const monthShifts = virtual.shifts.filter(shift => shift.date.startsWith(month) && !shift.cancellation);
-  const availableShifts = monthShifts.filter(shift => shift.published && !shift.cancellation && Date.parse(shift.start) > now.getTime()).sort((first, second) => first.start.localeCompare(second.start));
+  if (virtual.planningPeriods?.[month] === 'closed') return [];
+  const availableShifts = monthShifts.filter(shift => Date.parse(shift.start) > now.getTime()).sort((first, second) => first.start.localeCompare(second.start));
   const isActiveForSeason = (member: Member, shift: Shift) => seasonForDate(shift.date) === 'winter' ? member.winterActive : member.summerActive;
   const monthCounts = new Map(virtual.members.map(member => [member.id, monthShifts.reduce((total, shift) => total + (isActiveForSeason(member, shift) ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
   const totalCounts = new Map(virtual.members.map(member => [member.id, virtual.shifts.reduce((total, shift) => total + (!shift.cancellation && isActiveForSeason(member, shift) && Date.parse(shift.start) > now.getTime() ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
   const suggestions: AssignmentSuggestion[] = [];
   for (const shift of availableShifts) for (const task of shift.tasks) {
     if (task.memberId) continue;
-    const candidates = virtual.members.filter(member => member.active && isActiveForSeason(member, shift) && !eligibility(virtual, shift, task, member, now)).sort((first, second) =>
+    const candidates = virtual.members.filter(member => member.active && (!virtual.activatedMemberIds || virtual.activatedMemberIds.includes(member.id))
+      && isAvailable(virtual,member.id,shift.date) && isActiveForSeason(member, shift) && !eligibility(virtual, shift, task, member, now)).sort((first, second) =>
       Number(!!missingQualification(task, first)) - Number(!!missingQualification(task, second))
       || (monthCounts.get(first.id) ?? 0) - (monthCounts.get(second.id) ?? 0)
       || (totalCounts.get(first.id) ?? 0) - (totalCounts.get(second.id) ?? 0)

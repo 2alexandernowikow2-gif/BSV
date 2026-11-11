@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Bell, CalendarDays, Check, ClipboardList, Clock, FlaskConical, KeyRound, LoaderCircle, LogOut, Mail, RefreshCw, Search, Settings, ShieldCheck, Users, X } from 'lucide-react';
-import { applyCommand, demoSeed, localDate, localTime, memberSeasonStatus, nextDate, normalizeQualification, normalizeTaskName, QUALIFICATION_NAMES, taskWindow, validEmail, validateSnapshot, type Actor, type Command, type Member, type Notification, type Snapshot } from '../lib/domain';
+import { applyCommand, demoSeed, isAvailable, localDate, localTime, memberSeasonStatus, nextDate, normalizeQualification, normalizeTaskName, QUALIFICATION_NAMES, taskWindow, validEmail, validateSnapshot, type Actor, type Command, type Member, type Notification, type Snapshot } from '../lib/domain';
 import ScheduleCalendar, { germanDate, ShiftRow } from './ScheduleCalendar';
 import MemberDirectory from './MemberDirectory';
 import Planning from './Planning';
@@ -10,13 +10,14 @@ import ShiftDetail from './ShiftDetail';
 
 type SessionUser = { id: string; memberId: string; role: string; name: string };
 type Session = { configured: boolean; user: SessionUser | null };
-type Tab = 'calendar' | 'duties' | 'members' | 'planning' | 'settings';
+type Tab = 'calendar' | 'duties' | 'members' | 'planning' | 'settings' | 'availability';
 type StoredDemo = { snapshot: Snapshot; email: string; notifications: Notification[] };
 const STORAGE_KEY = 'bsv-weitnau-demo-v1';
 const LOGIN_EMAIL_KEY = 'bsv-remembered-login-email';
 const navigation = [
   { id: 'calendar', name: 'Dienstkalender', icon: CalendarDays, admin: false },
   { id: 'duties', name: 'Meine Dienste', icon: ClipboardList, admin: false },
+  { id: 'availability', name: 'Verfuegbarkeit', icon: Check, admin: false },
   { id: 'planning', name: 'Planung', icon: CalendarDays, admin: true },
   { id: 'members', name: 'Mitarbeiter', icon: Users, admin: true },
   { id: 'settings', name: 'Einstellungen', icon: Settings, admin: false },
@@ -130,6 +131,14 @@ export default function ScheduleApp() {
     finally { setBusy(false); pending.current = false; }
   }
   async function run(command: Command): Promise<boolean> {
+    if (command.type === 'assign' && command.memberId && snapshot) {
+      const taskId = command.taskId;
+      const shift = snapshot.shifts.find(item => item.tasks.some(task => task.id === taskId));
+      if (shift && !isAvailable(snapshot,command.memberId,shift.date)) {
+        if (!window.confirm('Dieses Mitglied hat sich fuer den Tag als nicht verfuegbar gemeldet. Trotzdem zuweisen?')) return false;
+        command = { ...command,availabilityConfirmed:true };
+      }
+    }
     if (!snapshot || pending.current) return false;
     pending.current = true; setBusy(true); setError(''); setMessage('');
     try {
@@ -195,7 +204,7 @@ export default function ScheduleApp() {
     if (!window.confirm('Alle lokalen Demo-Aenderungen und Benachrichtigungen verwerfen?')) return;
     try { localStorage.removeItem(STORAGE_KEY); window.location.assign('/'); } catch { setError('Lokaler Speicher ist nicht verfuegbar.'); }
   }
-  function navigate(next: Tab) { if (next === 'members' && !demo) { window.location.assign('/admin/mitarbeiter'); return; } setTab(next); setError(''); setMessage(''); setSelectedId(null); setPasswordMode(false); }
+  function navigate(next: Tab) { if (next === 'availability') { window.location.assign('/verfuegbarkeit'); return; } if (next === 'members' && !demo) { window.location.assign('/admin/mitarbeiter'); return; } setTab(next); setError(''); setMessage(''); setSelectedId(null); setPasswordMode(false); }
 
   if (loading) return <main className="loading-screen"><span className="brand-mark">BSV</span><h1>BSV Weitnau</h1><p><LoaderCircle size={19} className="spin" />Dienstplanung wird geladen</p></main>;
   if (session?.configured && !session.user) return <Login onLogin={login} busy={busy} error={error} />;
@@ -224,7 +233,7 @@ export default function ScheduleApp() {
     {(passwordMode || safeTab === 'settings') && <section className="settings-section">{admin && !passwordMode && <><section className="settings-band"><div><Bell size={23} /><h2>Benachrichtigungen</h2><p className="muted">Empfaengeradresse fuer Dienst-Ruecktritte</p></div><form onSubmit={event => { event.preventDefault(); const value = String(new FormData(event.currentTarget).get('email')).trim(); if (!validEmail(value)) { setError('Bitte gueltige Empfaengeradresse angeben.'); return; } void run({ type: 'settings', email: value }); }}><label>E-Mail<input key={email} name="email" type="email" required defaultValue={email} placeholder={demo ? 'demo0@example.invalid' : 'E-Mail-Adresse'} /></label><button className="primary-button" disabled={busy}><Check size={17} />Adresse speichern</button><p className="small muted">{demo ? 'Demo: kein Versand. Die Adresse wird nur lokal gespeichert.' : 'Versand und Warteschlange werden ausschliesslich vom Server verwaltet.'}</p></form></section>{demo && <section className="notification-section"><div className="section-heading"><h2>Lokale Ruecktrittsmeldungen</h2><span className="badge amber">Demo: kein Versand</span></div>{notifications.length ? <div className="notification-list">{notifications.map(item => <article key={item.id}><Mail size={19} /><div><strong>{item.member} · {item.task}</strong><p>{item.shift}</p><small>An: {item.recipient || 'Keine Adresse'} · {new Date(item.createdAt).toLocaleString('de-DE', { timeZone: 'Europe/Berlin' })}</small></div><span className="badge neutral">{item.status}</span></article>)}</div> : <div className="empty-inline"><Bell size={20} /><span>Noch keine lokalen Ruecktrittsmeldungen.</span></div>}</section>}</>}
     <section className="settings-band"><div><KeyRound size={23} /><h2>{passwordMode ? 'Neues Passwort' : 'Persoenlicher Zugang'}</h2><p className="muted">{name}</p>{!demo && <a className="text-button" href="/konto">Mein Profil bearbeiten <ArrowRight size={15} /></a>}</div><form onSubmit={savePassword}><label>Neues Passwort<input name="password" type="password" autoComplete="new-password" minLength={6} required /></label><label>Passwort bestaetigen<input name="confirm" type="password" autoComplete="new-password" minLength={6} required /></label><button className="primary-button" disabled={busy}><KeyRound size={17} />Passwort speichern</button>{demo && <p className="small muted">Demo: keine echte Passwortaenderung.</p>}</form></section></section>}
     <footer className="page-footer"><span>BSV Weitnau · Interne Dienstplanung</span><span>{demo ? 'DEMO · ' : ''}Stand {snapshot.version} · Europe/Berlin</span></footer></main>
-    </div><nav className="mobile-nav" aria-label="Mobile Hauptnavigation">{navigation.filter(item => !item.admin || admin).map(item => <button key={item.id} className={safeTab === item.id ? 'active' : ''} aria-current={safeTab === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><item.icon size={20} /><span>{item.id === 'calendar' ? 'Kalender' : item.id === 'duties' ? 'Dienste' : item.id === 'settings' ? 'Konto' : item.name}</span></button>)}</nav>
+    </div><nav className="mobile-nav" aria-label="Mobile Hauptnavigation">{navigation.filter(item => !item.admin || admin).map(item => <button key={item.id} className={safeTab === item.id ? 'active' : ''} aria-current={safeTab === item.id ? 'page' : undefined} onClick={() => navigate(item.id)}><item.icon size={20} /><span>{item.id === 'calendar' ? 'Kalender' : item.id === 'duties' ? 'Dienste' : item.id === 'settings' ? 'Konto' : item.id === 'availability' ? 'Verfuegbar' : item.name}</span></button>)}</nav>
     {selected && <ShiftDetail key={selected.id} shift={selected} snapshot={snapshot} actor={actor} busy={busy} run={run} close={() => setSelectedId(null)} actionError={error} />}
     </div>;
 }

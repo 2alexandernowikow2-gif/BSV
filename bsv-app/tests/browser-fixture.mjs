@@ -1,11 +1,11 @@
 import { createServer } from 'node:http';
-import { cpSync,mkdtempSync,rmSync,symlinkSync } from 'node:fs';
+import { cpSync,mkdtempSync,realpathSync,rmSync,symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const app = dirname(dirname(fileURLToPath(import.meta.url)));
+const app = realpathSync.native(dirname(dirname(fileURLToPath(import.meta.url))));
 const temporary = mkdtempSync(join(tmpdir(),'bsv-account-browser-'));
 for (const file of ['src','package.json','tsconfig.json','next.config.ts']) cpSync(join(app,file),join(temporary,file),{ recursive:true });
 symlinkSync(join(app,'node_modules'),join(temporary,'node_modules'),process.platform === 'win32' ? 'junction' : 'dir');
@@ -21,6 +21,13 @@ const accounts = [
   makeAccount(4,'Altbestand','Ohne Zugang',null,'mitarbeiter','eingeladen',false)
 ];
 const schedule = { version:0,shifts:[],members:[],planningPeriods:{} };
+const availabilityExceptions = [];
+for (const offset of [1,3,5]) {
+  const date = new Date(Date.now() + offset * 86400000).toISOString().slice(0,10);
+  for (const index of [0,1]) schedule.shifts.push({ id:`availability-${offset}-${index}`,date,title:index ? 'Spaetdienst' : 'Fruehdienst',kind:'manual',
+    start:index ? '14:00' : '09:30',end:index ? '18:00' : '13:30',published:index === 0,
+    tasks:[{id:`availability-task-${offset}-${index}`,name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:offset === 1 ? accounts[0].id : null}] });
+}
 function user(account) { return { id:account.user_id,email:account.email,aud:'authenticated',role:'authenticated',email_confirmed_at:new Date().toISOString(),
   app_metadata:{ provider:'email',providers:['email'] },user_metadata:{ role:'admin' },created_at:new Date().toISOString() }; }
 function session(account) {
@@ -56,7 +63,29 @@ const backend = createServer(async (request,response) => {
     return send(user(account));
   }
   if (url.pathname === '/rest/v1/rpc/current_member') return send(actor.account_status === 'aktiv' ? actor : null);
+  if (url.pathname === '/rest/v1/rpc/load_availability') {
+    const dates = [...new Set(schedule.shifts.map(shift => shift.date))].sort();
+    return send({ memberId:actor.id,admin:actor.role === 'admin',exceptions:availabilityExceptions,
+      members:accounts.filter(account => account.account_status === 'aktiv').map(account => ({id:account.id,name:account.name,winterActive:account.winter_active,summerActive:account.summer_active})),
+      days:dates.map(date => {
+        const shifts = schedule.shifts.filter(shift => shift.date === date);
+        return {date,count:shifts.length,published:shifts.every(shift => shift.published),mixed:shifts.some(shift => shift.published) && !shifts.every(shift => shift.published),
+          assigned:shifts.some(shift => shift.tasks.some(task => task.memberId === actor.id)),assignedMemberIds:actor.role === 'admin' ? [...new Set(shifts.flatMap(shift => shift.tasks.map(task => task.memberId).filter(Boolean)))] : []};
+      }) });
+  }
+  if (['/rest/v1/rpc/set_availability','/rest/v1/rpc/restore_availability'].includes(url.pathname)) {
+    if (actor.role !== 'admin' && actor.id !== body.target_member_id) { response.statusCode = 403; return send({code:'42501',message:'Nur eigene Meldungen sind aenderbar.'}); }
+    for (const date of body.service_dates) {
+      const index = availabilityExceptions.findIndex(entry => entry.memberId === body.target_member_id && entry.date === date);
+      const available = body.available ?? !body.unavailable_dates.includes(date);
+      if (available && index >= 0) availabilityExceptions.splice(index,1);
+      if (!available && index < 0) availabilityExceptions.push({memberId:body.target_member_id,date});
+    }
+    return send(null);
+  }
   if (url.pathname === '/rest/v1/rpc/load_schedule') {
+    schedule.availabilityExceptions = availabilityExceptions;
+    schedule.activatedMemberIds = accounts.filter(account => account.account_status === 'aktiv').map(account => account.id);
     schedule.members = accounts.filter(account => !account.archived_at).map(account => ({
       id:account.id,name:account.name,active:account.account_status === 'aktiv',qualifications:account.qualifications,
       winterActive:account.winter_active,summerActive:account.summer_active,

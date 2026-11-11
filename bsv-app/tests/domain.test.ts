@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { applyCommand, assignmentReport, DEFAULT_SHIFT_TIMES, demoSeed, deterministicUuid, eligibility, generateShifts, instant, lastPlanningTimes, localTime, makeShift, memberSeasonStatus, missingQualification, OPTIONAL_TASK_NAMES, overlaps, previewTimes, QUALIFICATION_NAMES, reportMonths, seasonForDate, suggestMonthlyAssignments, TASK_NAMES, taskWindow, type Snapshot, type Shift } from '../src/lib/domain';
 import { commandToDatabase, snapshotFromDatabase } from '../src/lib/schedule-serialization';
 import { matchesAppOrigin as sameOrigin } from '../src/lib/request-origin';
+import { availabilityCounts, isAvailable } from '../src/lib/domain';
+import { serviceDatesInRange } from '../src/lib/availability';
 
 const now = new Date('2026-01-01T00:00:00Z');
 const admin = { memberId: deterministicUuid('admin'), role: 'admin' };
@@ -11,6 +13,23 @@ const fixture = (shifts: Shift[]): Snapshot => ({ shifts, members: [member], ver
 const shift = () => ({ ...makeShift('2026-01-03', 'early', '09:30', '14:00', ['Bergstation', 'Bügel/Liftaufsicht']), published: true });
 
 describe('Dienstplanung lokal', () => {
+  it('nimmt ohne Ausnahme Verfuegbarkeit an und schliesst Ausnahmen aus Entwurfsvorschlaegen aus', () => {
+    const draft = { ...shift(),published:false };
+    const snapshot = fixture([draft]);
+    expect(isAvailable(snapshot,member.id,draft.date)).toBe(true);
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now).length).toBeGreaterThan(0);
+    snapshot.availabilityExceptions = [{ memberId:member.id,date:draft.date }];
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now)).toEqual([]);
+    expect(draft.tasks.every(task => task.memberId === null)).toBe(true);
+    expect(availabilityCounts(snapshot,draft.date)).toEqual({ available:0,total:1 });
+    snapshot.activatedMemberIds = [];
+    expect(availabilityCounts(snapshot,draft.date)).toEqual({ available:0,total:0 });
+  });
+  it('waehlt nur existierende Diensttage ab dem heutigen Berliner Datum', () => {
+    const days = ['2026-01-01','2026-01-02','2026-01-04'].map(date => ({ date,count:2,published:false,mixed:false,assigned:false }));
+    expect(serviceDatesInRange(days,'2026-01-01','2026-01-03',new Date('2026-01-01T23:30:00Z'))).toEqual(['2026-01-02']);
+    expect(() => serviceDatesInRange(days,'2026-01-04','2026-01-02',now)).toThrow('Zeitraum');
+  });
   it('generiert Freitag und zwei Wochenenddienste je Tag', () => {
     const result = generateShifts('2026-01-02', '2026-01-04', ['Bergstation']);
     expect(result).toHaveLength(5);
