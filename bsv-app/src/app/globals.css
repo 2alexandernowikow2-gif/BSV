@@ -292,6 +292,7 @@ td { padding: 15px 12px; border-bottom: 1px solid var(--line); vertical-align: m
 .monthly-step .primary-button { font-size: 12px; }
 .monthly-suggestions { max-height: 270px; overflow-y: auto; border-top: 1px solid var(--line); }
 .monthly-suggestion { display: flex; align-items: center; gap: 10px; padding: 7px 3px; border-bottom: 1px solid var(--line); }
+.monthly-suggestion .icon-button { width: 44px; height: 44px; }
 .monthly-suggestion > span { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .monthly-suggestion strong { font-size: 12px; }
 .monthly-suggestion small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
@@ -346,6 +347,8 @@ td { padding: 15px 12px; border-bottom: 1px solid var(--line); vertical-align: m
 .assignment-table .total-cell { color: var(--green-dark); font-weight: 700; }
 .report-footnote { padding-top: 10px; font-size: 11px; }
 .roster-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 13px; }
+.roster-footer-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.roster-footer-actions button { min-height: 44px; }
 .preview-section { margin-top: 26px; padding-top: 22px; border-top: 2px solid #bdd2c2; }
 .preview-list { max-height: 350px; overflow-y: auto; border-top: 1px solid var(--line); }
 .preview-list > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; border-bottom: 1px solid var(--line); padding: 11px 8px; background: white; font-size: 13px; }

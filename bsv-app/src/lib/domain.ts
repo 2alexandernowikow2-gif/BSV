@@ -28,6 +28,7 @@ export type Command =
   | { type: 'create'; shift: Shift }
   | { type: 'generate'; shifts: Shift[] }
   | { type: 'deleteDraft'; shiftId: string }
+  | { type: 'deleteDrafts'; ids: string[] }
   | { type: 'cancelShift'; shiftId: string; reason: string | null }
   | { type: 'reactivateShift'; shiftId: string }
   | { type: 'updateTimes'; updates: TimeUpdate[] }
@@ -132,29 +133,38 @@ export function eligibility(snapshot: Snapshot, shift: Shift, task: Task, member
 export function missingQualification(task: Task, member: Member): string | null {
   return task.qualification && !member.qualifications.includes(task.qualification) ? task.qualification : null;
 }
-export function suggestMonthlyAssignments(snapshot: Snapshot, month: string, now = new Date()): AssignmentSuggestion[] {
+export function suggestMonthlyAssignments(snapshot: Snapshot, month: string, now = new Date(), dismissed: Pick<AssignmentSuggestion, 'taskId' | 'memberId'>[] = []): AssignmentSuggestion[] {
   const virtual: Snapshot = structuredClone(snapshot);
   const monthShifts = virtual.shifts.filter(shift => shift.date.startsWith(month) && !shift.cancellation);
   if (virtual.planningPeriods?.[month] === 'closed') return [];
   const availableShifts = monthShifts.filter(shift => Date.parse(shift.start) > now.getTime()).sort((first, second) => first.start.localeCompare(second.start));
   const isActiveForSeason = (member: Member, shift: Shift) => seasonForDate(shift.date) === 'winter' ? member.winterActive : member.summerActive;
-  const monthCounts = new Map(virtual.members.map(member => [member.id, monthShifts.reduce((total, shift) => total + (isActiveForSeason(member, shift) ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
-  const totalCounts = new Map(virtual.members.map(member => [member.id, virtual.shifts.reduce((total, shift) => total + (!shift.cancellation && isActiveForSeason(member, shift) && Date.parse(shift.start) > now.getTime() ? shift.tasks.filter(task => task.memberId === member.id).length : 0), 0)]));
+  const monthCounts = new Map(virtual.members.map(member => [member.id, monthShifts.reduce((total, shift) => total + shift.tasks.filter(task => task.memberId === member.id).length, 0)]));
   const suggestions: AssignmentSuggestion[] = [];
   for (const shift of availableShifts) for (const task of shift.tasks) {
     if (task.memberId) continue;
+    const previousMonth = nextDate(`${shift.date.slice(0,7)}-01`,-1).slice(0,7);
+    const history = new Map(virtual.members.map(member => {
+      const assigned = virtual.shifts.filter(other => !other.cancellation && Date.parse(other.start) < Date.parse(shift.start)
+        && other.tasks.some(otherTask => otherTask.memberId === member.id));
+      return [member.id, {
+        servedPreviousMonth: assigned.some(other => other.date.startsWith(previousMonth)),
+        lastAssignment: assigned.reduce((latest,other) => Math.max(latest,Date.parse(other.start)),-1),
+      }];
+    }));
     const candidates = virtual.members.filter(member => member.active && (!virtual.activatedMemberIds || virtual.activatedMemberIds.includes(member.id))
+      && !dismissed.some(proposal => proposal.taskId === task.id && proposal.memberId === member.id)
       && isAvailable(virtual,member.id,shift.date) && isActiveForSeason(member, shift) && !eligibility(virtual, shift, task, member, now)).sort((first, second) =>
-      Number(!!missingQualification(task, first)) - Number(!!missingQualification(task, second))
-      || (monthCounts.get(first.id) ?? 0) - (monthCounts.get(second.id) ?? 0)
-      || (totalCounts.get(first.id) ?? 0) - (totalCounts.get(second.id) ?? 0)
+      (monthCounts.get(first.id) ?? 0) - (monthCounts.get(second.id) ?? 0)
+      || Number(history.get(first.id)?.servedPreviousMonth) - Number(history.get(second.id)?.servedPreviousMonth)
+      || (history.get(first.id)?.lastAssignment ?? -1) - (history.get(second.id)?.lastAssignment ?? -1)
+      || Number(!!missingQualification(task, first)) - Number(!!missingQualification(task, second))
       || first.name.localeCompare(second.name, 'de')
     );
     const member = candidates[0];
     if (!member) continue;
     task.memberId = member.id;
     monthCounts.set(member.id, (monthCounts.get(member.id) ?? 0) + 1);
-    totalCounts.set(member.id, (totalCounts.get(member.id) ?? 0) + 1);
     suggestions.push({ taskId: task.id, memberId: member.id, memberName: member.name, date: shift.date, shiftTitle: shift.title, taskName: task.name, missingQualification: missingQualification(task, member) });
   }
   return suggestions;
@@ -243,14 +253,17 @@ export function applyCommand(snapshot: Snapshot, command: Command, actor: Actor,
       if (shift.tasks.some(task => task.memberId !== null)) throw new Error('Neue Aufgaben muessen unbesetzt sein.');
       next.shifts.push(structuredClone(shift));
     }
-  } else if (command.type === 'deleteDraft') {
-    const index = next.shifts.findIndex(item => item.id === command.shiftId);
-    const shift = next.shifts[index];
-    if (!shift) throw new Error('Dienst nicht gefunden.');
-    if (shift.published) throw new Error('Freigegebene Dienste koennen nicht geloescht werden. Bitte absagen.');
-    ensureMonthEditable(shift);
-    if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Entwuerfe bleiben als Historie erhalten.');
-    next.shifts.splice(index, 1);
+  } else if (command.type === 'deleteDraft' || command.type === 'deleteDrafts') {
+    const ids = command.type === 'deleteDraft' ? [command.shiftId] : command.ids;
+    if (!ids.length || ids.length > 5000 || new Set(ids).size !== ids.length) throw new Error('Ungueltige Entwurfsauswahl.');
+    for (const id of ids) {
+      const shift = next.shifts.find(item => item.id === id);
+      if (!shift) throw new Error('Dienst nicht gefunden.');
+      if (shift.published) throw new Error('Freigegebene Dienste koennen nicht geloescht werden. Bitte absagen.');
+      ensureMonthEditable(shift);
+      if (Date.parse(shift.start) <= now.getTime()) throw new Error('Vergangene Entwuerfe bleiben als Historie erhalten.');
+    }
+    next.shifts = next.shifts.filter(shift => !ids.includes(shift.id));
   } else if (command.type === 'cancelShift') {
     const shift = next.shifts.find(item => item.id === command.shiftId);
     if (!shift) throw new Error('Dienst nicht gefunden.');

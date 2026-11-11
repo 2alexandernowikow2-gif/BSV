@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock, LockKeyhole, Send, ShieldCheck, UserPlus, X } from 'lucide-react';
-import { availabilityCounts, eligibility, instant, isAvailable, localTime, missingQualification, previewTimes, taskWindow, type Actor, type Command, type Shift, type Snapshot, type TimeUpdate } from '../lib/domain';
+import { eligibility, instant, isAvailable, localTime, missingQualification, previewTimes, seasonForDate, taskWindow, type Actor, type Command, type Shift, type Snapshot, type TimeUpdate } from '../lib/domain';
 import { germanDate } from './ScheduleCalendar';
 import ShiftAdminActions from './ShiftAdminActions';
 import { useDialog } from './useDialog';
@@ -16,6 +16,10 @@ export default function ShiftDetail({ shift, snapshot, actor, busy, run, close, 
   const admin = actor.role === 'admin';
   const historical = Date.parse(shift.start) <= Date.now();
   const member = snapshot.members.find(item => item.id === actor.memberId);
+  const availableMembers = snapshot.members.filter(candidate => candidate.active
+    && (!snapshot.activatedMemberIds || snapshot.activatedMemberIds.includes(candidate.id))
+    && (seasonForDate(shift.date) === 'winter' ? candidate.winterActive : candidate.summerActive)
+    && isAvailable(snapshot,candidate.id,shift.date));
   useDialog(dialog, true, close);
   function checkTimes() {
     try {
@@ -27,8 +31,7 @@ export default function ShiftDetail({ shift, snapshot, actor, busy, run, close, 
     {actionError && <div className="notice error" role="alert"><AlertTriangle size={17} />{actionError}</div>}
     <ShiftAdminActions shift={shift} actor={actor} busy={busy} run={run} />
     {admin && <section className="planning-availability">
-      <strong>{availabilityCounts(snapshot,shift.date).available} von {availabilityCounts(snapshot,shift.date).total} verfuegbar</strong>
-      <details><summary>Nicht verfuegbare Mitglieder</summary><ul>{snapshot.members.filter(candidate => !isAvailable(snapshot,candidate.id,shift.date)).map(candidate => <li key={candidate.id}>{candidate.name} · Nicht verfuegbar</li>)}</ul></details>
+      <details><summary>Verfuegbare Mitglieder</summary>{availableMembers.length ? <ul>{availableMembers.map(candidate => <li key={candidate.id}>{candidate.name}</li>)}</ul> : <p>Keine verfuegbaren Mitglieder.</p>}</details>
       {shift.tasks.filter(task => task.memberId && !isAvailable(snapshot,task.memberId,shift.date)).map(task => <p className="availability-conflict" key={task.id}><AlertTriangle size={16} />{task.name}: {snapshot.members.find(candidate => candidate.id === task.memberId)?.name} ist nicht verfuegbar.</p>)}
       <a className="text-button" href="/verfuegbarkeit">Verfuegbarkeit verwalten</a>
     </section>}

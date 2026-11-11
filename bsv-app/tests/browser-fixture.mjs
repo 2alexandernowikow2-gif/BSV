@@ -94,6 +94,18 @@ const backend = createServer(async (request,response) => {
     }));
     return send(schedule);
   }
+  if (url.pathname === '/rest/v1/rpc/delete_drafts') {
+    if (actor.role !== 'admin') { response.statusCode = 403;return send({code:'42501',message:'Administrator required'}); }
+    if (body.expected_version !== schedule.version) { response.statusCode = 409;return send({code:'40001',message:'Schedule version conflict'}); }
+    const ids = body.shift_ids;
+    if (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length
+      || ids.some(id => { const shift = schedule.shifts.find(item => item.id === id); return !shift || shift.published || schedule.planningPeriods[shift.date.slice(0,7)] === 'closed'; })) {
+      response.statusCode = 400;return send({code:'22023',message:'Only future drafts can be deleted'});
+    }
+    schedule.shifts = schedule.shifts.filter(shift => !ids.includes(shift.id));
+    schedule.version += 1;
+    return send(schedule);
+  }
   if (url.pathname === '/rest/v1/rpc/mutate_schedule') {
     const command = body.command;
     if (body.expected_version !== schedule.version) { response.statusCode = 409;return send({ code:'40001',message:'Schedule version conflict' }); }

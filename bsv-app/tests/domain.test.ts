@@ -204,6 +204,62 @@ describe('Dienstplanung lokal', () => {
     expect(proposals).toHaveLength(1);
     expect(proposals[0].memberId).toBe(other.id);
   });
+  it('priorisiert einen ersten Monatseinsatz vor passender Qualifikation', () => {
+    const other = { ...member,id:deterministicUuid('fairness-new'),name:'Ohne Einsatz',qualifications:[] };
+    const assigned = makeShift('2026-01-03','early','09:30','14:00',['Bergstation']);
+    assigned.tasks[0].memberId = member.id;
+    const draft = makeShift('2026-01-04','early','09:30','14:00',['Bergstation']);
+    const proposals = suggestMonthlyAssignments({shifts:[assigned,draft],members:[member,other],version:0},'2026-01',now);
+    expect(proposals[0].memberId).toBe(other.id);
+    expect(proposals[0].missingQualification).toBe('Bergstation');
+  });
+  it('loescht ausgewaehlte Entwuerfe atomar und schuetzt freigegebene Dienste', () => {
+    const first = makeShift('2026-01-03','early','09:30','14:00',['Kasse']);
+    const second = makeShift('2026-01-04','early','09:30','14:00',['Kasse']);
+    const published = { ...makeShift('2026-01-05','early','09:30','14:00',['Kasse']),published:true };
+    const snapshot = fixture([first,second,published]);
+    expect(applyCommand(snapshot,{type:'deleteDrafts',ids:[first.id,second.id]},admin,now).snapshot.shifts).toEqual([published]);
+    expect(() => applyCommand(snapshot,{type:'deleteDrafts',ids:[first.id,published.id]},admin,now)).toThrow('Freigegebene');
+    expect(() => applyCommand(snapshot,{type:'deleteDrafts',ids:[]},admin,now)).toThrow('Entwurfsauswahl');
+    expect(() => applyCommand(snapshot,{type:'deleteDrafts',ids:[first.id,first.id]},admin,now)).toThrow('Entwurfsauswahl');
+    expect(snapshot.shifts).toHaveLength(3);
+  });
+  it('verwirft nur die konkrete Kombination und schlaegt eine Alternative ohne Zuweisung vor', () => {
+    const other = { ...member,id:deterministicUuid('alternative'),name:'Zweite Person',qualifications:[] };
+    const draft = makeShift('2026-01-04','early','09:30','14:00',['Bergstation']);
+    const snapshot = {shifts:[draft],members:[member,other],version:0};
+    const dismissed = [{taskId:draft.tasks[0].id,memberId:member.id}];
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now,dismissed)[0].memberId).toBe(other.id);
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now,[...dismissed,{taskId:draft.tasks[0].id,memberId:other.id}])).toEqual([]);
+    expect(draft.tasks[0].memberId).toBeNull();
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now)[0].memberId).toBe(member.id);
+  });
+  it('bevorzugt bei gleichem Monatsstand keinen Vormonatseinsatz und danach die laengste Pause', () => {
+    const other = { ...member,id:deterministicUuid('fairness-history'),name:'Zweite Person',qualifications:[] };
+    const history = makeShift('2025-12-20','early','09:30','14:00',['Bergstation']);
+    history.tasks[0].memberId = member.id;
+    const first = makeShift('2026-01-02','early','09:30','14:00',['Bergstation']);
+    first.tasks[0].memberId = member.id;
+    const second = makeShift('2026-01-03','early','09:30','14:00',['Bergstation']);
+    second.tasks[0].memberId = other.id;
+    const draft = makeShift('2026-01-04','early','09:30','14:00',['Bergstation']);
+    const snapshot = {shifts:[history,first,second,draft],members:[member,other],version:0};
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now)[0].memberId).toBe(other.id);
+    history.date = '2025-11-20'; history.start = instant(history.date,'09:30'); history.end = instant(history.date,'14:00');
+    expect(suggestMonthlyAssignments(snapshot,'2026-01',now)[0].memberId).toBe(member.id);
+  });
+  it('verteilt virtuelle Vorschlaege gleichmaessig und ignoriert abgesagte Einsaetze', () => {
+    const other = { ...member,id:deterministicUuid('fairness-round'),name:'Andere Person',qualifications:[] };
+    const drafts = [2,3,4,5].map(day => makeShift(`2026-01-0${day}`,'early','09:30','14:00',['Bergstation']));
+    const cancelled = makeShift('2026-01-01','early','09:30','14:00',['Bergstation']);
+    cancelled.tasks[0].memberId = other.id;
+    cancelled.cancellation = {cancelledAt:now.toISOString(),cancelledBy:null,reason:null};
+    const snapshot = {shifts:[cancelled,...drafts],members:[member,other],version:0};
+    const proposals = suggestMonthlyAssignments(snapshot,'2026-01',now);
+    expect(proposals.filter(item => item.memberId === member.id)).toHaveLength(2);
+    expect(proposals.filter(item => item.memberId === other.id)).toHaveLength(2);
+    expect(drafts.every(item => item.tasks[0].memberId === null)).toBe(true);
+  });
   it('verwaltet Saisonstatus getrennt von Dienstzugang', () => {
     const summer = { ...member, status: 'summer' as const, winterActive: false, summerActive: true, active: true };
     expect(eligibility(fixture([]), shift(), shift().tasks[0], summer, now)).toBeNull();

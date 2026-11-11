@@ -73,6 +73,9 @@ export async function POST(request: Request, context: Context) {
       let result;
       if (command.type === 'updateMember') {
         return errorResponse('Bitte die zentrale Mitarbeiterverwaltung verwenden.',403);
+      } else if (command.type === 'deleteDrafts') {
+        const deletion = z.object({ type:z.literal('deleteDrafts'),ids:z.array(z.string().regex(/^[A-Za-z0-9_-]{1,100}$/)).min(1).max(5000) }).strict().parse(command);
+        result = await client.rpc('delete_drafts',{ expected_version:version,shift_ids:deletion.ids });
       } else if (command.type === 'monthPhase') {
         const phaseCommand = z.object({ type: z.literal('monthPhase'), month: z.string().regex(/^(20[0-9]{2}|2100)-(0[1-9]|1[0-2])$/), phase: z.enum(['open', 'closed']) }).strict().parse(command);
         result = await client.rpc('set_month_phase', { expected_version: version, month_key: phaseCommand.month, next_phase: phaseCommand.phase });

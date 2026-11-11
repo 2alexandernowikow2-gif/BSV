@@ -30,6 +30,27 @@ beforeAll(async () => {
 afterAll(async () => { await db.close(); });
 
 describe.sequential('PostgreSQL-Kontoschutz', () => {
+  it('loescht mehrere Entwuerfe atomar, nur als Admin und bei passender Version', async () => {
+    const shifts = [1,2,3].map(index => ({id:`bulk-draft-${index}`,date:`2091-01-0${index}`,title:'Test',kind:'manual',start:'09:00',end:'12:00',published:index === 3,
+      tasks:[{id:`bulk-task-${index}`,name:'Kasse',qualification:null,offsetMinutes:0,durationMinutes:null,memberId:null}]}));
+    await db.query(`update public.schedule_state set data = $1::jsonb,version = 0 where id = 1`,[JSON.stringify(shifts)]);
+    await db.exec(`select set_config('request.jwt.claim.sub','${memberId}',false);set role authenticated;`);
+    try { await expect(db.query(`select public.delete_drafts(0,array['bulk-draft-1','bulk-draft-2'])`)).rejects.toThrow('Administrator'); }
+    finally { await db.exec('reset role'); }
+    await db.exec(`select set_config('request.jwt.claim.sub','${adminId}',false);set role authenticated;`);
+    try {
+      await expect(db.query(`select public.delete_drafts(0,array['bulk-draft-1','bulk-draft-3'])`)).rejects.toThrow('Published');
+      await expect(db.query(`select public.delete_drafts(1,array['bulk-draft-1'])`)).rejects.toThrow('version conflict');
+      await expect(db.query(`select public.delete_drafts(0,array['bulk-draft-1','unknown'])`)).rejects.toThrow('not found');
+      await expect(db.query(`select public.delete_drafts(0,array['bulk-draft-1','bulk-draft-1'])`)).rejects.toThrow('Invalid');
+      const unchanged = await db.query<{snapshot:{shifts:unknown[];version:number}}>(`select public.load_schedule() as snapshot`);
+      expect(unchanged.rows[0].snapshot.shifts).toHaveLength(3);
+      expect(unchanged.rows[0].snapshot.version).toBe(0);
+      const result = await db.query<{snapshot:{shifts:Array<{id:string}>;version:number}}>(`select public.delete_drafts(0,array['bulk-draft-1','bulk-draft-2']) as snapshot`);
+      expect(result.rows[0].snapshot.shifts.map(shift => shift.id)).toEqual(['bulk-draft-3']);
+      expect(result.rows[0].snapshot.version).toBe(1);
+    } finally { await db.exec('reset role'); }
+  });
   it('ignoriert selbst gesetzte Rollenmetadaten beim Auth-Trigger', async () => {
     await db.exec(`insert into auth.users(id,email,raw_user_meta_data) values ('10000000-0000-4000-8000-000000000003','untrusted@example.invalid','{"role":"admin"}');`);
     const result = await db.query<{ role: string }>(`select role from public.members where email = 'untrusted@example.invalid'`);

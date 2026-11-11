@@ -153,7 +153,7 @@ export default function ScheduleApp() {
         setSnapshot(data);
         if (command.type === 'settings') setEmail(command.email);
       }
-      setMessage(command.type === 'withdraw' ? demo ? 'Dienst zurueckgegeben. Demo: kein Versand. Lokaler Benachrichtigungseintrag angelegt.' : 'Dienst zurueckgegeben. Die Benachrichtigung wird serverseitig verarbeitet.' : command.type === 'deleteDraft' ? 'Entwurf geloescht.' : command.type === 'cancelShift' ? demo ? 'Dienst abgesagt. Demo: kein E-Mail-Versand.' : 'Dienst abgesagt. Zugeordnete Mitarbeiter werden informiert.' : command.type === 'reactivateShift' ? demo ? 'Dienst reaktiviert. Demo: kein E-Mail-Versand.' : 'Dienst reaktiviert. Zugeordnete Mitarbeiter werden informiert.' : command.type === 'settings' ? 'Benachrichtigungsadresse gespeichert.' : 'Aenderung gespeichert.');
+      setMessage(command.type === 'withdraw' ? demo ? 'Dienst zurueckgegeben. Demo: kein Versand. Lokaler Benachrichtigungseintrag angelegt.' : 'Dienst zurueckgegeben. Die Benachrichtigung wird serverseitig verarbeitet.' : command.type === 'deleteDrafts' ? `${command.ids.length} Entwuerfe geloescht.` : command.type === 'deleteDraft' ? 'Entwurf geloescht.' : command.type === 'cancelShift' ? demo ? 'Dienst abgesagt. Demo: kein E-Mail-Versand.' : 'Dienst abgesagt. Zugeordnete Mitarbeiter werden informiert.' : command.type === 'reactivateShift' ? demo ? 'Dienst reaktiviert. Demo: kein E-Mail-Versand.' : 'Dienst reaktiviert. Zugeordnete Mitarbeiter werden informiert.' : command.type === 'settings' ? 'Benachrichtigungsadresse gespeichert.' : 'Aenderung gespeichert.');
       return true;
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : 'Aenderung fehlgeschlagen.');

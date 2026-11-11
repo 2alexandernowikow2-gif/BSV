@@ -20,6 +20,20 @@ automatisch zugewiesen. Der Datenbank-RPC verlangt bei Nichtverfuegbarkeit eine
 explizite Bestaetigung; bereits bestehende Zuweisungen bleiben erhalten.
 Selbsteintragung und Ruecktritt sind unveraendert.
 
+Vorschlagsreihenfolge: Verfuegbarkeit, aktivierter Zugang, Saison und fehlende
+Zeitkonflikte sind Voraussetzungen. Danach zuerst die wenigsten zugewiesenen
+Einzelaufgaben im gewaehlten Monat, bei Gleichstand kein Einsatz im Vormonat,
+dann der am weitesten zurueckliegende Einsatz vor dem vorgeschlagenen Dienst,
+zuletzt passende Qualifikation und Name. Entwurfszuweisungen und freigegebene
+Zuweisungen zaehlen gleich, unabhaengig von Selbsteintragung oder Adminzuweisung.
+Abgesagte Dienste zaehlen nicht. Virtuelle Vorschlaege erhoehen die Monatszahl
+nur innerhalb der Berechnung, niemals im gespeicherten Dienstplan.
+
+Das X neben einem Vorschlag verwirft die Kombination aus Aufgabe und Mitglied
+fuer die geoeffnete Planungsansicht. Eine verfuegbare Alternative kann danach
+vorgeschlagen werden. Zuruecksetzen oder erneutes Oeffnen der Ansicht hebt diese
+lokalen Ablehnungen auf; es werden keine Zuweisungen oder Meldungen geaendert.
+
 Manuelle Abnahme vor Freigabe:
 - Mitglied: eigener Tag, Zeitraum, Rueckgaengig und fehlgeschlagene Speicherung.
 - Admin: Meldung fuer anderes Mitglied, Vorschlag, Override und bestehender Konflikt.
@@ -33,3 +47,9 @@ Verfuegbarkeitsstufen. Benachrichtigungen koennen spaeter zentral im
 `set_availability`-RPC ueber eine transaktionale Outbox ergaenzt werden.
 
 Pruefungen: npm test, npm run typecheck, npm run build.
+
+Sammelloeschung von Entwuerfen: Vor Deployment der neuen Loeschaktion Migration
+014 nach 013 anwenden. Der Button neben Veroeffentlichen entfernt nur ausgewaehlte
+zukuenftige Entwuerfe nach Bestaetigung. Die Datenbank prueft die gesamte Auswahl
+atomar und bricht bei veralteter Planversion, freigegebenen Diensten, vergangenen
+Diensten oder geschlossenen Monaten ohne Teilloeschung ab. Es erfolgt kein Mailversand.
